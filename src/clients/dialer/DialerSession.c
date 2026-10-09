@@ -9,6 +9,8 @@
 #include "utils/PlatformUtils.h"
 #include "utils/Logger.h"
 
+#include "hunan/Hunan.h"
+
 #include <string.h>
 
 static void clean_session()
@@ -21,6 +23,30 @@ static void clean_session()
 bool init_session()
 {
     LOG_DEBUG("init_session 函数入口检查, 使用配置: %" PRIu8 ", 下标: %" PRIu8, g_prog_status[tl_thread_idx].login_cfg.idx, tl_thread_idx);
+
+    /**
+     * 湖南: **不做算法协商**。
+     *
+     * 广东的流程是 POST Algo-ID 到 ticket_url, 服务端回一个 ZSM 块,
+     * 客户端解包出 Algo-ID 再查本地密钥表。湖南门户不下发 ZSM ——
+     * ticket.cgi 直接返回加密的 XML 票据 (实测响应 352 字节),
+     * 而此刻 algo_id 还是全 0 UUID, 照广东那条路走必然失败。
+     *
+     * 所以这里跳过 ZSM 拉取, 直接用固定的 Algo-ID 初始化本地密钥表。
+     * 身份 (client_ip / mac / ac_ip) 已在 refresh_states() 里从真实网卡取好。
+     */
+    if (g_prog_status[tl_thread_idx].login_cfg.province == PROVINCE_HUNAN)
+    {
+        if (init_cipher(HUNAN_ALGO_ID) == false)
+        {
+            LOG_ERROR("湖南: 初始化 %s 的加解密工厂失败", HUNAN_ALGO_ID);
+            return false;
+        }
+        snprintf(g_prog_status[tl_thread_idx].auth_cfg.algo_id, ALGO_ID_LEN, "%s", HUNAN_ALGO_ID);
+        LOG_INFO("湖南: 使用固定 Algo-ID %s (跳过 ZSM 拉取)", HUNAN_ALGO_ID);
+        g_prog_status[tl_thread_idx].runtime_status.is_initialized = 1;
+        return true;
+    }
 
     /**
      * 向 ticket_url POST 获取 ZSM.

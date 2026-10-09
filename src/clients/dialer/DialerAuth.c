@@ -12,16 +12,84 @@
 #include "utils/Logger.h"
 #include "utils/sim/SimThread.h"
 
+#include "hunan/Hunan.h"
+#include "hunan/HunanXml.h"
+
+#include <ctype.h>
 #include <stdio.h>
 
 #ifndef __OPENWRT__
 #include "control/Control.h"
 #endif
 
-AuthStatus auth()
+/**
+ * 湖南: 端点与身份都不靠发现。
+ *
+ * 广东要从门户页里的 campus.js 注释块挖 auth-url / ticket-url,
+ * 再从挖到的 ticket-url 的查询串里取 wlanuserip / wlanacip。
+ * 湖南门户没有这套 —— 门户地址、端点名、身份都是已知的:
+ *   · 门户 = 配置里的 portal:portal_port
+ *   · 端点 = 固定的 .cgi 名 (HunanXml 里的字段顺序表)
+ *   · 每个请求都要自带查询串 wlanuserip=&mscgip=&wlanusermac=
+ *
+ * 身份 (client_ip / mac_addr / ac_ip=网关) 已由 refresh_states() 从真实网卡填好。
+ *
+ * keep-url / term-url **不用预填** —— 湖南 auth.cgi 的响应里会返回这两个
+ * (实测), 后面的 login() 会把它们解析出来。
+ */
+static bool discover_hunan()
 {
-    LOG_DEBUG("auth 函数入口检查, 使用配置: %" PRIu8 ", 下标: %" PRId8, g_prog_status[tl_thread_idx].login_cfg.idx, tl_thread_idx);
+    login_cfg_t* lc = &g_prog_status[tl_thread_idx].login_cfg;
+    auth_cfg_t* ac = &g_prog_status[tl_thread_idx].auth_cfg;
 
+    if (ac->client_ip[0] == '\0')
+    {
+        LOG_ERROR("湖南: 没有本机 IP (refresh_states 没能从网卡取到身份)");
+        return false;
+    }
+    if (lc->portal[0] == '\0')
+    {
+        LOG_ERROR("湖南: 配置里没有门户地址");
+        return false;
+    }
+    if (lc->mscgip[0] == '\0')
+    {
+        LOG_WARN("湖南: 配置里没有 mscgip, 查询串里会留空 (实测留空也能过)");
+    }
+
+    /* 查询串里的 MAC 是不带分隔符的 12 位小写 */
+    char mac_hex[MAC_ADDR_LEN];
+    size_t j = 0;
+    for (size_t i = 0; ac->mac_addr[i] && j < sizeof(mac_hex) - 1; ++i)
+    {
+        if (isxdigit((unsigned char)ac->mac_addr[i]))
+            mac_hex[j++] = (char)tolower((unsigned char)ac->mac_addr[i]);
+    }
+    mac_hex[j] = '\0';
+    if (j != 12)
+    {
+        LOG_ERROR("湖南: MAC 不是 12 位十六进制 (\"%s\")", ac->mac_addr);
+        return false;
+    }
+
+    /* 每个字段都显式限长: 查询串最长 74 字节, 保证拼出来的 URL 塞得下 */
+    char query[128];
+    snprintf(query, sizeof(query), "wlanuserip=%.15s&mscgip=%.15s&wlanusermac=%.12s",
+             ac->client_ip, lc->mscgip, mac_hex);
+
+    snprintf(ac->ticket_url, TICKET_URL_LEN, "http://%s:%" PRIu16 "/%s?%s",
+             lc->portal, lc->portal_port, hunan_endpoint_path(HUNAN_EP_TICKET), query);
+    snprintf(ac->auth_url, AUTH_URL_LEN, "http://%s:%" PRIu16 "/%s?%s",
+             lc->portal, lc->portal_port, hunan_endpoint_path(HUNAN_EP_AUTH), query);
+
+    LOG_INFO("湖南 Ticket URL: %s", ac->ticket_url);
+    LOG_INFO("湖南 Auth URL  : %s", ac->auth_url);
+    LOG_INFO("湖南身份: IP=%s MAC=%s 网关=%s", ac->client_ip, ac->mac_addr, ac->ac_ip);
+    return true;
+}
+
+static bool discover_guangdong()
+{
     const char portal_start_tag[] = "<!--//config.campus.js.chinatelecom.com";
     const char portal_end_tag[] = "//config.campus.js.chinatelecom.com-->";
 
@@ -29,7 +97,7 @@ AuthStatus auth()
     if (resp.http_code != HTTP_OK || resp.body_size == 0 || resp.body_data == NULL) // 如果响应体没有内容 (非 200 响应码), 则返回
     {
         LOG_ERROR("响应体为空, 无法提取认证配置");
-        return AUTH_FAILED;
+        return false;
     }
 
     char* portal_config = extract_between_tags(resp.body_data, portal_start_tag, portal_end_tag); // 从响应体内容中提取指定内容
@@ -37,14 +105,14 @@ AuthStatus auth()
     if (portal_config == NULL)
     {
         LOG_ERROR("提取门户配置失败");
-        return AUTH_FAILED;
+        return false;
     }
 
     char* auth_url = xml_parser(portal_config, "auth-url"); // 提取 auth_url (包含 CDATA 等字符)
     if (auth_url == NULL)
     {
         LOG_ERROR("提取 Auth URL 失败");
-        return AUTH_FAILED;
+        return false;
     }
 
     char* cleaned_auth_url = clean_CDATA(auth_url); // 提取 auth_url (纯 url, 用于登录函数)
@@ -52,7 +120,7 @@ AuthStatus auth()
     if (cleaned_auth_url == NULL)
     {
         LOG_ERROR("清除 Auth URL 失败");
-        return AUTH_FAILED;
+        return false;
     }
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.auth_url, AUTH_URL_LEN, "%s", safe_str(cleaned_auth_url)); // 将 auth_url 填入认证配置变量中
     LOG_INFO("Auth URL: %s", g_prog_status[tl_thread_idx].auth_cfg.auth_url);
@@ -63,7 +131,7 @@ AuthStatus auth()
     if (ticket_url == NULL)
     {
         LOG_ERROR("提取 Ticket URL 失败");
-        return AUTH_FAILED;
+        return false;
     }
 
     char* cleaned_ticket_url = clean_CDATA(ticket_url); // 提取 ticket_url (纯 url, 用于获取 ticket)
@@ -71,7 +139,7 @@ AuthStatus auth()
     if (cleaned_ticket_url == NULL)
     {
         LOG_ERROR("清除 Ticket URL CDATA 失败");
-        return AUTH_FAILED;
+        return false;
     }
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.ticket_url, TICKET_URL_LEN, "%s", safe_str(cleaned_ticket_url)); // 将 ticket_url 填入认证配置变量中
     LOG_INFO("Ticket URL: %s", g_prog_status[tl_thread_idx].auth_cfg.ticket_url);
@@ -80,7 +148,7 @@ AuthStatus auth()
     if (client_ip == NULL)
     {
         LOG_ERROR("提取 Client IP 失败");
-        return AUTH_FAILED;
+        return false;
     }
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.client_ip, IP_LEN, "%s", safe_str(client_ip)); // 将 client_ip 填入认证配置变量中
     LOG_INFO("Client IP: %s", g_prog_status[tl_thread_idx].auth_cfg.client_ip);
@@ -103,11 +171,27 @@ AuthStatus auth()
     if (ac_ip == NULL)
     {
         LOG_ERROR("提取 AC IP 失败 (wlanacip 与 mscgip 均缺失)");
-        return AUTH_FAILED;
+        return false;
     }
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.ac_ip, IP_LEN, "%s", safe_str(ac_ip)); // 将 ac_ip 填入认证配置变量中
     LOG_INFO("AC IP: %s", g_prog_status[tl_thread_idx].auth_cfg.ac_ip);
     free(ac_ip);
+    return true;
+}
+
+AuthStatus auth()
+{
+    LOG_DEBUG("auth 函数入口检查, 使用配置: %" PRIu8 ", 下标: %" PRId8, g_prog_status[tl_thread_idx].login_cfg.idx, tl_thread_idx);
+
+    /* 端点与身份: 湖南查配置+网卡, 广东从门户页发现 */
+    const bool province = g_prog_status[tl_thread_idx].login_cfg.province;
+    LOG_INFO("省份模式: %s", (province == PROVINCE_HUNAN) ? "湖南" : "广东");
+    const bool found = (province == PROVINCE_HUNAN) ? discover_hunan() : discover_guangdong();
+    if (found == false)
+    {
+        LOG_ERROR("准备认证参数失败");
+        return AUTH_FAILED;
+    }
 
     /**
      * 初始化会话

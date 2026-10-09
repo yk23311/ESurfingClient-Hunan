@@ -49,6 +49,11 @@
 
 #define DEFAULT_WEB_EXTERNAL_ACC false
 
+/* ---- 省份 ---- */
+#define PROVINCE_GUANGDONG 0
+#define PROVINCE_HUNAN     1
+#define DEFAULT_PROVINCE   PROVINCE_GUANGDONG
+
 typedef enum
 {
     GET_TICKET = 1,
@@ -114,6 +119,11 @@ typedef struct
     char user_agent[USER_AGENT_LEN];
     uint32_t mark;
     bool use_cus_mark;
+    /* ---- 省份适配 ---- */
+    uint8_t province;      /* PROVINCE_* */
+    char portal[64];       /* 湖南用: 门户 IP (广东靠门户页发现, 用不到) */
+    uint16_t portal_port;  /* 湖南用: 门户端口 */
+    char mscgip[IP_LEN];   /* 湖南用: 接入设备地址, 拼进查询串 */
     time_window_t time_windows[MAX_TIME_WINDOWS];
     uint8_t time_window_count;
     bool has_time_control;

@@ -37,6 +37,20 @@
 char* get_adapters_json();
 
 /**
+ * @brief 挑一块像校园网出口的网卡 (有 IPv4 且有网关), 输出真实 IP / MAC / 网关
+ *
+ * 湖南报文需要真实身份 (广东版是随机 MAC、也没有网关查询)。
+ * @return 找到返回 true
+ */
+bool get_campus_identity(char* ip, size_t ip_cap, char* mac, size_t mac_cap,
+                         char* gateway, size_t gw_cap);
+
+/**
+ * @brief 取真实计算机名 (湖南的 <host-name>)。成功返回 true。
+ */
+bool get_host_name(char* out, size_t cap);
+
+/**
  * @brief 截取 URL 中指定参数
  * @param url URL 地址
  * @param search_str_start 要查找的参数名

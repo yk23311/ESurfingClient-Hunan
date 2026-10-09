@@ -34,6 +34,10 @@ static const char s_default_cfg[] = "{\n"
                                     "           \"password\": \"\",\n"
                                     "           \"channel\": 3,\n"
                                     "           \"mark\": \"\",\n"
+                                    "           \"province\": \"guangdong\",\n"
+                                    "           \"portal\": \"175.12.104.1\",\n"
+                                    "           \"portal_port\": 10001,\n"
+                                    "           \"mscgip\": \"\",\n"
                                     "           \"time_windows\": []\n"
                                     "       }\n"
                                     "   ]\n"
@@ -461,6 +465,7 @@ bool load_cfg()
 
         g_prog_status[valid_i].login_cfg.chn = parse_channel_json(chn, i + 1);
         apply_channel_ua(&g_prog_status[valid_i].login_cfg, i + 1);
+        apply_province_json(&g_prog_status[valid_i].login_cfg, account, i + 1);
 
         LOG_DEBUG("使用 UA: %s", g_prog_status[valid_i].login_cfg.user_agent);
         LOG_DEBUG("当前使用下标: %" PRIu8, valid_i);
@@ -574,6 +579,7 @@ bool load_cfg()
 
         g_prog_status[0].login_cfg.chn = parse_channel_json(chn, i + 1);
         apply_channel_ua(&g_prog_status[0].login_cfg, i + 1);
+        apply_province_json(&g_prog_status[0].login_cfg, account, i + 1);
 
         LOG_DEBUG("使用 UA: %s", g_prog_status[0].login_cfg.user_agent);
         LOG_DEBUG("当前使用下标: 0");

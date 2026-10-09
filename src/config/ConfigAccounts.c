@@ -6,6 +6,8 @@
 
 #include "utils/Logger.h"
 
+#include "hunan/Hunan.h"
+
 #include "cJSON/cJSON.h"
 
 #include <ctype.h>
@@ -106,6 +108,81 @@ void apply_channel_ua(login_cfg_t* cfg, uint8_t cfg_no)
         cfg->chn = 3;
         snprintf(cfg->user_agent, USER_AGENT_LEN, ANDROID_UA);
         break;
+    }
+}
+
+static bool prov_str_eq(const char* a, const char* b)
+{
+    if (!a || !b) return false;
+    while (*a && *b)
+    {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+        a++; b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+/**
+ * 读取省份相关配置。
+ *
+ * 广东: 全部靠运行时发现 (门户页里挖 auth-url/ticket-url), 这里什么都不用给。
+ * 湖南: 门户是固定的, 端点也是固定的 .cgi, 所以要从配置里拿门户地址;
+ *       而且 UA / ostag / client-id 都用官方客户端的固定值, 覆盖掉通道给的那套。
+ *
+ * 必须在 apply_channel_ua 之后调用。
+ */
+void apply_province_json(login_cfg_t* cfg, const cJSON* account, const uint8_t cfg_no)
+{
+    cfg->province = DEFAULT_PROVINCE;
+    snprintf(cfg->portal, sizeof(cfg->portal), "%s", HUNAN_DEFAULT_PORTAL);
+    cfg->portal_port = HUNAN_DEFAULT_PORT;
+    cfg->mscgip[0] = '\0';
+
+    const cJSON* pv = cJSON_GetObjectItem(account, "province");
+    if (pv && cJSON_IsString(pv) && pv->valuestring && pv->valuestring[0])
+    {
+        if (prov_str_eq(pv->valuestring, "hunan"))
+        {
+            cfg->province = PROVINCE_HUNAN;
+        }
+        else if (prov_str_eq(pv->valuestring, "guangdong") || prov_str_eq(pv->valuestring, "gd"))
+        {
+            cfg->province = PROVINCE_GUANGDONG;
+        }
+        else
+        {
+            LOG_WARN("配置 %" PRIu8 " province 参数无法识别 (\"%s\"), 按广东处理",
+                     cfg_no, pv->valuestring);
+        }
+    }
+
+    const cJSON* portal = cJSON_GetObjectItem(account, "portal");
+    if (portal && cJSON_IsString(portal) && portal->valuestring && portal->valuestring[0])
+    {
+        snprintf(cfg->portal, sizeof(cfg->portal), "%s", portal->valuestring);
+    }
+
+    const cJSON* pport = cJSON_GetObjectItem(account, "portal_port");
+    if (pport && cJSON_IsNumber(pport) && pport->valueint > 0 && pport->valueint < 65536)
+    {
+        cfg->portal_port = (uint16_t)pport->valueint;
+    }
+
+    const cJSON* msc = cJSON_GetObjectItem(account, "mscgip");
+    if (msc && cJSON_IsString(msc) && msc->valuestring && msc->valuestring[0])
+    {
+        snprintf(cfg->mscgip, sizeof(cfg->mscgip), "%s", msc->valuestring);
+    }
+
+    if (cfg->province == PROVINCE_HUNAN)
+    {
+        snprintf(cfg->user_agent, USER_AGENT_LEN, "%s", HUNAN_UA);
+        LOG_INFO("配置 %" PRIu8 " 使用湖南模式: 门户 %s:%" PRIu16 "  UA %s",
+                 cfg_no, cfg->portal, cfg->portal_port, cfg->user_agent);
+    }
+    else
+    {
+        LOG_DEBUG("配置 %" PRIu8 " 使用广东模式 (运行时发现门户与端点)", cfg_no);
     }
 }
 

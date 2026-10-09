@@ -3,6 +3,8 @@
 #include "utils/PlatformUtils.h"
 #include "utils/Logger.h"
 
+#include "hunan/Hunan.h"
+
 #include <ctype.h>
 
 static void reset_host_name()
@@ -74,8 +76,63 @@ static void reset_mac_addr()
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.mac_addr, MAC_ADDR_LEN, "%s", safe_str(mac_addr));
 }
 
+/**
+ * 湖南身份: 真实网卡 MAC / IP / 网关 + 固定的算法档与 client-id。
+ *
+ * 与广东的关键差别 (全部有官方抓包与实测支撑):
+ *   · Algo-ID  **固定** FAB1DCDE-…, 不做算法协商 (门户不下发 ZSM)
+ *   · client-id 官方是固定值, 不是随机 UUID
+ *   · mac 是**真实网卡** MAC, 格式 CC-28-AA-4B-B6-D5 (广东是随机值、冒号分隔)
+ *   · host-name 是真实计算机名大写 (广东随机 10 位十六进制)
+ *   · ac_ip 填**真实默认网关** —— 湖南报文的 <gwip> 就是它
+ */
+static void reset_hunan_identity()
+{
+    login_cfg_t* lc = &g_prog_status[tl_thread_idx].login_cfg;
+    auth_cfg_t* ac = &g_prog_status[tl_thread_idx].auth_cfg;
+
+    snprintf(ac->algo_id, ALGO_ID_LEN, "%s", HUNAN_ALGO_ID);
+    snprintf(ac->client_id, CLIENT_ID_LEN, "%s", HUNAN_CLIENT_ID);
+    snprintf(ac->ostag, OSTAG_LEN, "%s", HUNAN_OSTAG);
+
+    char host[128];
+    if (get_host_name(host, sizeof(host)))
+    {
+        for (char* p = host; *p; ++p) *p = (char)toupper((unsigned char)*p);
+        /* 显式限长: 主机名比 HOST_NAME_LEN 长时按长度截断, 不让编译器猜 */
+        snprintf(ac->host_name, HOST_NAME_LEN, "%.*s", HOST_NAME_LEN - 1, host);
+        LOG_DEBUG("湖南: 主机名 %s", ac->host_name);
+    }
+    else
+    {
+        snprintf(ac->host_name, HOST_NAME_LEN, "%s", "PC");
+        LOG_WARN("湖南: 取不到计算机名, 用一个占位值");
+    }
+
+    char ip[IP_LEN], mac[MAC_ADDR_LEN], gw[IP_LEN];
+    if (get_campus_identity(ip, sizeof(ip), mac, sizeof(mac), gw, sizeof(gw)))
+    {
+        snprintf(ac->mac_addr, MAC_ADDR_LEN, "%s", mac);
+        snprintf(ac->client_ip, IP_LEN, "%s", ip);
+        snprintf(ac->ac_ip, IP_LEN, "%s", gw);
+        LOG_INFO("湖南: IP=%s MAC=%s 网关=%s algo=%s",
+                 ac->client_ip, ac->mac_addr, ac->ac_ip, ac->algo_id);
+    }
+    else
+    {
+        LOG_ERROR("湖南: 拿不到真实网卡身份 (需要一块有 IPv4 且有网关的网卡)");
+    }
+    LOG_DEBUG("湖南: UA=%s", lc->user_agent);
+}
+
 void refresh_states()
 {
+    if (g_prog_status[tl_thread_idx].login_cfg.province == PROVINCE_HUNAN)
+    {
+        reset_hunan_identity();
+        return;
+    }
+
     snprintf(g_prog_status[tl_thread_idx].auth_cfg.algo_id, ALGO_ID_LEN, "00000000-0000-0000-0000-000000000000"); // 初始化 algo_id
     reset_host_name(); // 重置 hostname
     reset_client_id(); // 重置 client_id
