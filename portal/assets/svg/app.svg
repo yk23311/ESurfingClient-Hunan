@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="天翼校园客户端">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B88D8"/>
+      <stop offset="1" stop-color="#0F6CBD"/>
+    </linearGradient>
+  </defs>
+  <!-- WinUI 风格：圆角方块底板 -->
+  <rect x="3" y="3" width="42" height="42" rx="10" fill="url(#g)"/>
+  <!-- 信号弧线：由外到内，表示连接 -->
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M14 30a13 13 0 0 1 20 0" stroke-width="2.6" opacity=".45"/>
+    <path d="M18 33.5a8.4 8.4 0 0 1 12 0" stroke-width="2.6" opacity=".72"/>
+  </g>
+  <circle cx="24" cy="37" r="2.6" fill="#FFFFFF"/>
+</svg>

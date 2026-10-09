@@ -216,6 +216,21 @@ bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm)
             cJSON_AddStringToObject(account, "channel", channel_name);
         }
 
+        /**
+         * 省份相关字段必须回给网页界面。
+         *
+         * 网页界面保存配置走的是 /api/saveConfigs, 而落盘是**原样写**
+         * (见 Config.c 的 write_cfg_json) —— 页面读不到什么, 保存时就会写丢什么。
+         * 少了这几个字段, 湖南配置会在用户点一次"保存"后静默退回广东模式:
+         * 下次启动 apply_province_json 读不到 province, 默认就是 guangdong。
+         */
+        cJSON_AddStringToObject(account, "province",
+                                g_prog_status[0].login_cfg.province == PROVINCE_HUNAN
+                                    ? "hunan" : "guangdong");
+        cJSON_AddStringToObject(account, "portal", g_prog_status[0].login_cfg.portal);
+        cJSON_AddNumberToObject(account, "portal_port", g_prog_status[0].login_cfg.portal_port);
+        cJSON_AddStringToObject(account, "mscgip", g_prog_status[0].login_cfg.mscgip);
+
         cJSON* time_windows = cJSON_CreateArray();
         for (uint8_t i = 0; i < g_prog_status[0].login_cfg.time_window_count; i++)
         {
