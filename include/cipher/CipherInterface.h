@@ -134,6 +134,16 @@ cipher_interface_t* create_des_ecb_six_android_cipher(
     const uint8_t* key);
 
 /**
+ * 湖南天翼校园 (FAB1DCDE-2D24-41CD-8510-2416DC7854CF) 的会话密码。
+ * 双层 AES-128-CBC, 两层共用同一个 IV; key = K1 || K2 (32 字节)。
+ * 与 create_aes_double_cbc_android_cipher 结构相同, **补零规则不同**:
+ * 湖南是「先补一个 NUL 结束符, 再补齐到 16 的整数倍」。
+ */
+cipher_interface_t* create_aes_double_cbc_hunan_cipher(
+    const uint8_t* key,
+    const uint8_t* iv);
+
+/**
  * 加密函数
  * @param text 需要加密的文本
  * @return 加密后文本

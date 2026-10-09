@@ -56,4 +56,8 @@ extern const uint8_t iv_AD8BB5B0_0E72_4198_A362_96D52C1B7ED1[16];
 extern const uint8_t key_35101415_A20F_4DFE_B00B_0B4F3B2F8C66[48];
 extern const uint8_t iv_35101415_A20F_4DFE_B00B_0B4F3B2F8C66[16];
 
+/* 湖南: 双层 AES-128-CBC, 两层共用 IV; key = K1 || K2 */
+extern const uint8_t key_FAB1DCDE_2D24_41CD_8510_2416DC7854CF[32];
+extern const uint8_t iv_FAB1DCDE_2D24_41CD_8510_2416DC7854CF[16];
+
 #endif

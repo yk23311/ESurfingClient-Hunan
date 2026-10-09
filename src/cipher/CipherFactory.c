@@ -234,6 +234,18 @@ static cipher_interface_t* create_cipher_factory(const char* algo_id)
             iv_35101415_A20F_4DFE_B00B_0B4F3B2F8C66
         );
     }
+    // 湖南天翼校园 (双层 AES-128-CBC, 湖南补零规则)
+    // 注意: 这一档不能复用 create_aes_double_cbc_android_cipher ——
+    // 后者的补零规则是纯补零, 而湖南要先补 NUL 结束符, 明文长度为 16 的
+    // 整数倍时会差一整块 (keep.cgi 明文恰为 384 字节, 会少 16 字节)。
+    if (strcmp(algo_id, "FAB1DCDE-2D24-41CD-8510-2416DC7854CF") == 0)
+    {
+        LOG_DEBUG("命中 FAB1DCDE-2D24-41CD-8510-2416DC7854CF (湖南)");
+        return create_aes_double_cbc_hunan_cipher(
+            key_FAB1DCDE_2D24_41CD_8510_2416DC7854CF,
+            iv_FAB1DCDE_2D24_41CD_8510_2416DC7854CF
+        );
+    }
     return NULL;
 }
 

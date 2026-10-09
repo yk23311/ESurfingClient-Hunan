@@ -68,6 +68,7 @@ add_executable(ESurfingClient
         src/cipher/algo/android/tea_triple_cbc_android.c
         src/cipher/algo/android/tea_triple_ecb_android.c
         src/cipher/algo/ios/ios_zsm.c
+        src/cipher/algo/hunan/aes_double_cbc_hunan.c
         src/cipher/algo/linux/aes_cbc_linux.c
         src/cipher/algo/linux/aes_ecb_linux.c
         src/cipher/algo/linux/des_ecb_six_linux.c
@@ -91,6 +92,7 @@ add_executable(ESurfingClient
         src/config/ConfigAccounts.c
         src/config/ConfigDefaults.c
         src/config/Config.c
+        src/hunan/HunanXml.c
         src/states/Refresh.c
         src/states/States.c
         src/utils/sim/SimEvpCipher.c
@@ -196,3 +198,24 @@ else ()
 endif ()
 
 install(TARGETS ESurfingClient RUNTIME DESTINATION bin)
+
+# ---------------------------------------------------------------------------
+# 湖南离线自检: 用官方抓包逐字节验收密码层与报文层, 不联网。
+# 默认不构建, 需要时: cmake -DBUILD_HUNAN_SELFTEST=ON ...
+# ---------------------------------------------------------------------------
+option(BUILD_HUNAN_SELFTEST "构建湖南离线自检 (hunan_selftest)" OFF)
+
+if (BUILD_HUNAN_SELFTEST)
+    add_executable(hunan_selftest
+            src/hunan/HunanSelfTest.c
+            src/hunan/HunanXml.c
+            src/cipher/algo/hunan/aes_double_cbc_hunan.c
+            src/cipher/CipherUtils.c
+            src/utils/sim/SimEvpAes.c
+    )
+    target_include_directories(hunan_selftest PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/src
+    )
+    target_compile_options(hunan_selftest PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif ()
