@@ -2,7 +2,7 @@
 
 #include "webserver/WebInternal.h"
 
-#include <mongoose/mongoose.h>
+#include <minihttp/minihttp.h>
 
 #include "control/Control.h"
 

@@ -122,7 +122,7 @@ add_executable(ESurfingClient
 
 if (NOT __OPENWRT__)
     target_sources(ESurfingClient PRIVATE
-            third_party/mongoose/mongoose.c
+            third_party/minihttp/minihttp.c
             src/supervisor/SupervisorSignal.c
             src/supervisor/SupervisorChild.c
             src/supervisor/SupervisorState.c

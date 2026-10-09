@@ -9,6 +9,20 @@
 
 #define SEP '\\'
 
+/**
+ * Windows 平台头必须在这里引入 —— 这是「平台头」该做的事 (非 Windows 分支
+ * 下面也并列引入了一整套 POSIX 头)。
+ *
+ * 以前这几个头是靠 mongoose.h 顺带拉进来的, 所以谁都没写; 换成 minihttp 之后
+ * 立刻暴露出来: WebServe.c / WebLogFiles.c 用到的 HANDLE / FindFirstFileA /
+ * CreateFileA 全部变成未知符号。
+ *
+ * 顺序要紧: winsock2.h **必须**在 windows.h 之前。反过来的话 windows.h 会先
+ * 拉进老旧的 winsock.h, 两个头会互相冲突。
+ */
+#include <winsock2.h>
+#include <windows.h>
+
 #else
 
 #define SEP '/'

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <mongoose/mongoose.h>
+#include <minihttp/minihttp.h>
 
 extern bool s_local_state;
 

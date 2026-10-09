@@ -1,6 +1,6 @@
 #include "webserver/WebInternal.h"
 
-#include <mongoose/mongoose.h>
+#include <minihttp/minihttp.h>
 
 #include "clients/net/NetClient.h"
 

@@ -1,6 +1,6 @@
 #include "webserver/WebInternal.h"
 
-#include <mongoose/mongoose.h>
+#include <minihttp/minihttp.h>
 
 #include "utils/PlatformUtils.h"
 #include "utils/Logger.h"
@@ -93,7 +93,10 @@ int list_log_files(log_file_entry_t* out, const int max)
         if (count >= max) break;
         if (is_log_file_name(find_data.cFileName) == false) continue;
 
-        snprintf(out[count].name, sizeof(out[count].name), "%s", find_data.cFileName);
+        /* 显式限长: cFileName 是 MAX_PATH 大小的数组, 比本缓冲区大 ——
+         * 用 %.*s 把上界告诉编译器, 也把行为写明确 (超长就截断) */
+        snprintf(out[count].name, sizeof(out[count].name), "%.*s",
+                 (int)sizeof(out[count].name) - 1, find_data.cFileName);
         out[count].size = ((uint64_t)find_data.nFileSizeHigh << 32) | (uint64_t)find_data.nFileSizeLow;
         // FILETIME (100 纳秒, 1601 起) -> Unix 时间戳 (秒, 1970 起)
         const uint64_t file_time = ((uint64_t)find_data.ftLastWriteTime.dwHighDateTime << 32) |

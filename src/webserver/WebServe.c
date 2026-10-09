@@ -1,6 +1,6 @@
 #include "webserver/WebInternal.h"
 
-#include <mongoose/mongoose.h>
+#include <minihttp/minihttp.h>
 
 #include "utils/PlatformUtils.h"
 #include "utils/Logger.h"
