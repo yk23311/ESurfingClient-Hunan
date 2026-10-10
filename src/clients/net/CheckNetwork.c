@@ -5,6 +5,7 @@
 #include "utils/Logger.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define GENERATE_URL "http://connect.rom.miui.com/generate_204"
 #define GENERATE_BAK_URL "http://1.1.1.1"
@@ -29,6 +30,41 @@ static const char* auth_probe_url(char* buf, const size_t cap)
         return buf;
     }
     return AUTH_URL;
+}
+
+/**
+ * @brief 把 BAS 注入的门户 URL 快照下来
+ *
+ * 判定"需要认证"靠的就是这个 302, 而它的 Location 恰好带着门户地址与 mscgip ——
+ * 门户地址因此不需要配置、也不需要扫描网段: 接入设备每次都会主动告诉客户端。
+ *
+ * 实测 (2026-10-10 的 run.log): 未认证时 GET generate_204 得到
+ *   Location: http://175.12.104.1:10001/index.cgi?wlanuserip=...&mscgip=...&wlanusermac=...
+ *
+ * 只在非空且与上次不同时更新, 免得一次没有 Location 的响应把好值冲掉。
+ */
+static void remember_portal_hint()
+{
+    if (tl_thread_idx < 0) return;
+
+    const char* location = g_prog_status[tl_thread_idx].last_location;
+    if (location[0] == '\0') return;
+
+    char* hint = g_prog_status[tl_thread_idx].portal_hint;
+    if (strcmp(hint, location) == 0) return;
+
+    /* 显式限长复制: 用 snprintf("%s") 会触发 -Wformat-truncation (源最长 2048) */
+    size_t len = strlen(location);
+    if (len >= PORTAL_HINT_LEN)
+    {
+        LOG_WARN("门户地址过长 (%zu 字节), 截断到 %d 字节", len, PORTAL_HINT_LEN - 1);
+        len = PORTAL_HINT_LEN - 1;
+    }
+
+    memcpy(hint, location, len);
+    hint[len] = '\0';
+
+    LOG_INFO("接入设备下发门户地址: %s", hint);
 }
 
 network_status_t check_network_status(const bool connect_only)
@@ -117,7 +153,8 @@ network_status_t check_network_status(const bool connect_only)
     }
     if (resp.http_code == HTTP_FOUND)
     {
-        // 需要认证
+        // 需要认证。顺手把门户地址记下来 (就在这个 302 的 Location 里)
+        remember_portal_hint();
         return STATUS_NEED_AUTH;
     }
     // 网络错误

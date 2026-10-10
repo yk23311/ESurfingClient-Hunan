@@ -99,6 +99,12 @@ void clean()
     // 否则线程守护会立刻把刚下线的账号重新拉起来。
     const bool time_disabled = g_prog_status[tl_thread_idx].runtime_status.is_time_disabled;
 
+    /**
+     * 用户主动断开同理, 而且更硬: 清掉它等于"用户点了断开, 程序立刻自己连回去"。
+     * 这里正是登出发生的地方 —— 标志活过一次 clean(), 线程守护才不会重启线程。
+     */
+    const bool manual_offline = g_prog_status[tl_thread_idx].runtime_status.is_manual_offline;
+
     if (g_prog_status[tl_thread_idx].runtime_status.is_initialized == true) // 如果已经初始化会话, 则进入
     {
         if (g_prog_status[tl_thread_idx].runtime_status.is_authed == true) // 如果已经认证, 则进入
@@ -113,6 +119,7 @@ void clean()
     memset(&g_prog_status[tl_thread_idx].auth_cfg, 0, sizeof(auth_cfg_t)); // 清除 auth_cfg 的内容, 并置零
     memset(&g_prog_status[tl_thread_idx].runtime_status, 0, sizeof(runtime_status_t)); // 清除 runtime_status 的内容, 并置零
     g_prog_status[tl_thread_idx].runtime_status.is_time_disabled = time_disabled; // 恢复时间控制禁用状态
+    g_prog_status[tl_thread_idx].runtime_status.is_manual_offline = manual_offline; // 恢复"用户已断开"状态
 }
 
 void reset()

@@ -5,6 +5,7 @@
 #include "states/States.h"
 
 #include "utils/PlatformUtils.h"
+#include "utils/UrlParse.h"
 #include "utils/TimeControl.h"
 #include "utils/LogoutState.h"
 #include "utils/Shutdown.h"
@@ -17,22 +18,27 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifndef __OPENWRT__
 #include "control/Control.h"
 #endif
 
 /**
- * 湖南: 端点与身份都不靠发现。
+ * 湖南: 端点靠约定, 身份靠网卡, **门户地址靠接入设备下发**。
  *
  * 广东要从门户页里的 campus.js 注释块挖 auth-url / ticket-url,
  * 再从挖到的 ticket-url 的查询串里取 wlanuserip / wlanacip。
- * 湖南门户没有这套 —— 门户地址、端点名、身份都是已知的:
- *   · 门户 = 配置里的 portal:portal_port
+ * 湖南门户没有这套 —— 端点名和身份都是已知的:
  *   · 端点 = 固定的 .cgi 名 (HunanXml 里的字段顺序表)
  *   · 每个请求都要自带查询串 wlanuserip=&mscgip=&wlanusermac=
+ *   · 身份 (client_ip / mac_addr / ac_ip=网关) 由 refresh_states() 从真实网卡填好
  *
- * 身份 (client_ip / mac_addr / ac_ip=网关) 已由 refresh_states() 从真实网卡填好。
+ * 门户地址**不是**写死的: 未认证时 BAS 会把明文 HTTP 劫持成 302, 那个 Location
+ * 里直接带着门户地址与 mscgip (见 CheckNetwork.c 的 remember_portal_hint)。
+ * 配置里的 portal/mscgip 因此退化成"接入设备没下发时的回退值", 换接入设备不再失效。
+ * 广东分支本来就是这个机制 (discover_guangdong 读 last_location), 这里只是把它
+ * 补回湖南 —— 湖南适配时曾经把它改成了读配置。
  *
  * keep-url / term-url **不用预填** —— 湖南 auth.cgi 的响应里会返回这两个
  * (实测), 后面的 login() 会把它们解析出来。
@@ -47,14 +53,78 @@ static bool discover_hunan()
         LOG_ERROR("湖南: 没有本机 IP (refresh_states 没能从网卡取到身份)");
         return false;
     }
-    if (lc->portal[0] == '\0')
+
+    /**
+     * 用"判定需要认证那一刻"的快照, 不是 get_last_location() 跟随重定向之后的
+     * last_location —— 后者可能停在一个被动态防护挡着的网页门户上 (实测那个地址
+     * 根路径 412、index.cgi 403, 拿它当 API 基址必然全失败)。
+     * 快照缺失时才退回 last_location。
+     */
+    const char* hint = g_prog_status[tl_thread_idx].portal_hint;
+    if (hint[0] == '\0') hint = g_prog_status[tl_thread_idx].last_location;
+
+    char portal[64];
+    uint16_t portal_port = 0;
+
+    if (hint[0] != '\0' && url_split_host_port(hint, portal, sizeof(portal), &portal_port))
     {
-        LOG_ERROR("湖南: 配置里没有门户地址");
+        if (strcmp(portal, lc->portal) != 0 || portal_port != lc->portal_port)
+        {
+            LOG_INFO("湖南: 门户改用接入设备下发的 %s:%" PRIu16 " (配置里是 %s:%" PRIu16 ")",
+                     portal, portal_port, safe_str(lc->portal), lc->portal_port);
+        }
+    }
+    else if (lc->portal[0] != '\0')
+    {
+        snprintf(portal, sizeof(portal), "%s", lc->portal);
+        portal_port = lc->portal_port;
+        LOG_WARN("湖南: 接入设备未下发门户地址, 回退配置 %s:%" PRIu16, portal, portal_port);
+    }
+    else
+    {
+        LOG_ERROR("湖南: 没有门户地址 (接入设备未下发, 配置里也没有)");
         return false;
     }
-    if (lc->mscgip[0] == '\0')
+
+    /**
+     * mscgip 同样优先用接入设备下发的。
+     *
+     * 注意它**不是**默认网关: 查询串里的 mscgip 是接入设备地址 (实测
+     * 218.75.255.245), 而报文 <gwip> 用的是真实默认网关 (实测 100.67.192.1)。
+     * 两个值不同, 不能互相替代。
+     */
+    char mscgip[IP_LEN];
+    snprintf(mscgip, sizeof(mscgip), "%s", safe_str(lc->mscgip));
+
+    if (hint[0] != '\0')
     {
-        LOG_WARN("湖南: 配置里没有 mscgip, 查询串里会留空 (实测留空也能过)");
+        const char* found = NULL;
+        size_t found_len = 0;
+
+        /* 广东的习惯是 wlanacip, 湖南是 mscgip; 两个都认 */
+        if (url_find_query_value(hint, "mscgip", &found, &found_len) == false)
+        {
+            url_find_query_value(hint, "wlanacip", &found, &found_len);
+        }
+
+        if (found != NULL && found_len > 0)
+        {
+            if (found_len > sizeof(mscgip) - 1) found_len = sizeof(mscgip) - 1;
+
+            if (found_len != strlen(mscgip) || strncmp(found, mscgip, found_len) != 0)
+            {
+                LOG_INFO("湖南: mscgip 改用接入设备下发的 %.*s (配置里是 %s)",
+                         (int)found_len, found, mscgip[0] ? mscgip : "(空)");
+            }
+
+            memcpy(mscgip, found, found_len);
+            mscgip[found_len] = '\0';
+        }
+    }
+
+    if (mscgip[0] == '\0')
+    {
+        LOG_WARN("湖南: 没有 mscgip, 查询串里会留空 (实测留空也能过)");
     }
 
     /* 查询串里的 MAC 是不带分隔符的 12 位小写 */
@@ -75,12 +145,12 @@ static bool discover_hunan()
     /* 每个字段都显式限长: 查询串最长 74 字节, 保证拼出来的 URL 塞得下 */
     char query[128];
     snprintf(query, sizeof(query), "wlanuserip=%.15s&mscgip=%.15s&wlanusermac=%.12s",
-             ac->client_ip, lc->mscgip, mac_hex);
+             ac->client_ip, mscgip, mac_hex);
 
     snprintf(ac->ticket_url, TICKET_URL_LEN, "http://%s:%" PRIu16 "/%s?%s",
-             lc->portal, lc->portal_port, hunan_endpoint_path(HUNAN_EP_TICKET), query);
+             portal, portal_port, hunan_endpoint_path(HUNAN_EP_TICKET), query);
     snprintf(ac->auth_url, AUTH_URL_LEN, "http://%s:%" PRIu16 "/%s?%s",
-             lc->portal, lc->portal_port, hunan_endpoint_path(HUNAN_EP_AUTH), query);
+             portal, portal_port, hunan_endpoint_path(HUNAN_EP_AUTH), query);
 
     LOG_INFO("湖南 Ticket URL: %s", ac->ticket_url);
     LOG_INFO("湖南 Auth URL  : %s", ac->auth_url);
@@ -356,6 +426,27 @@ int work_auth()
 
             // 这是全流程里最长的合法静默 (可能几小时), sleep_ms 会按这个时长打卡
             sleep_ms(wait_ms, true);
+            continue;
+        }
+
+        /**
+         * 用户主动断开: 会话已经登出, 在这里等「连接」指令。
+         *
+         * 必须排在 wait_need_auth 之前 —— 断开之后网络本来就处于"需要认证"状态,
+         * 不拦一下会立刻重新认证, 用户看到的"断开"就只是一次瞬断。
+         * 这段等待期间不发任何网络请求。
+         */
+        if (g_prog_status[0].runtime_status.is_manual_offline)
+        {
+            LOG_INFO("已断开连接, 等待「连接」指令");
+
+            while (g_prog_status[0].runtime_status.is_manual_offline
+                   && g_need_exit == false && g_stop_requested == 0 && supervisor_gone() == false)
+            {
+                sleep_ms(1000, false);
+            }
+
+            network_ready = false; // 重新走一次网络检测再认证
             continue;
         }
 

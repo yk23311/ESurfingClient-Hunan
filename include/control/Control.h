@@ -14,6 +14,8 @@ typedef struct
     bool is_authed;
     bool is_running;
     bool is_time_disabled;
+    /* 用户主动断开中 (登出且不再自动重连), Web 端据此把按钮切成「连接」 */
+    bool is_manual_offline;
 } control_status_t;
 
 /* -------------------- 认证进程侧 -------------------- */
@@ -56,6 +58,21 @@ bool control_restart_auth(void);
  * @return 是否下发成功
  */
 bool control_apply_config(void);
+
+/**
+ * @brief 请求认证进程断开连接 (登出并停止自动重连)
+ *
+ * 语义是"用户主动下线": 先跑一次 term() 把会话从服务端释放, 之后**不再自动重连**,
+ * 直到 control_connect()。断开期间认证线程不再被拉起, 因此没有任何网络流量。
+ * @return 是否下发成功
+ */
+bool control_disconnect(void);
+
+/**
+ * @brief 请求认证进程重新连接 (解除断开状态并重新认证)
+ * @return 是否下发成功
+ */
+bool control_connect(void);
 
 /**
  * @brief 请求认证进程优雅退出 (监管者停止子进程时用)

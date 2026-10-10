@@ -3,7 +3,7 @@
    纯原生 JS，无框架、无外部依赖。
 
    对接的后端接口（全部来自 WebApiGet.c / WebApiPost.c）:
-     GET  /api/status/auth    -> {status:bool, reachable:bool}
+     GET  /api/status/auth    -> {status:bool, reachable:bool, offline:bool}
      GET  /api/status/online  -> 204 已在线 / 302 需认证 / 503 离线（无 body）
      GET  /api/status/sys     -> {version,uptime_ms,log_level,log_dir,
                                   config_file,program_enabled,restart_pending,
@@ -15,6 +15,8 @@
      POST /api/saveConfigs    -> 204（body 为**完整**配置 JSON）
      POST /api/applyConfigs   -> 204（body {"apply":true}）
      POST /api/restartAuth    -> 204
+     POST /api/disconnect     -> 204（登出并停止自动重连；幂等）
+     POST /api/connect        -> 204（解除断开状态；幂等）
    ========================================================================== */
 'use strict';
 
@@ -26,7 +28,7 @@ const ONLINE = { OK: 'ok', NEED_AUTH: 'need_auth', OFFLINE: 'offline', UNKNOWN: 
 const state = {
   page: 'dashboard',
   online: ONLINE.UNKNOWN,
-  auth: { status: false, reachable: false },
+  auth: { status: false, reachable: false, offline: false },
   sys: null,
   cfg: null,          // 最近一次从后端读到的配置
   provinceFromApi: null, // null = 后端不返回该字段（旧版本）
@@ -158,8 +160,15 @@ function renderStatus() {
   const a = state.auth || {};
   const s = state.sys;
 
+  /* 用户主动断开时, 网络探测必然显示"需要认证"/"已断线" —— 那是**预期结果**,
+     不是故障, 所以断开的判断要排在网络状态之前, 否则界面会把用户自己刚做的
+     操作报成异常。 */
+  const offline = a.offline === true;
+
   // 顶部胶囊
-  if (state.online === ONLINE.OK) {
+  if (offline) {
+    setStatusPill('err', '已断开');
+  } else if (state.online === ONLINE.OK) {
     setStatusPill('ok', a.status ? '已认证' : '已在线');
   } else if (state.online === ONLINE.NEED_AUTH) {
     setStatusPill('warn', '需要认证');
@@ -176,7 +185,10 @@ function renderStatus() {
   bar.setAttribute('stroke-dasharray', C.toFixed(1));
 
   let heroClass = '', stateText = '', hint = '', dash = 0;
-  if (state.online === ONLINE.OK && a.status) {
+  if (offline) {
+    heroClass = 'is-err'; stateText = '已断开连接'; dash = 0;
+    hint = '会话已登出，程序不会再自动重连';
+  } else if (state.online === ONLINE.OK && a.status) {
     heroClass = 'is-ok'; stateText = '已连接并认证'; dash = C;
     hint = '会话有效，心跳正常';
   } else if (state.online === ONLINE.OK) {
@@ -199,8 +211,9 @@ function renderStatus() {
 
   // 统计卡
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
-  set('#stAuth', a.status ? '已认证' : '未认证');
-  set('#stAuthSub', a.reachable === false ? '认证进程不可达' : '认证进程可达');
+  set('#stAuth', offline ? '已断开' : (a.status ? '已认证' : '未认证'));
+  set('#stAuthSub', offline ? '手动断开，等待「连接」'
+                            : (a.reachable === false ? '认证进程不可达' : '认证进程可达'));
   set('#stOnline', state.online === ONLINE.OK ? '通' :
                    state.online === ONLINE.NEED_AUTH ? '待认证' :
                    state.online === ONLINE.OFFLINE ? '断' : '未知');
@@ -220,6 +233,18 @@ function renderStatus() {
     set('#siCfg', s.config_file || '—');
     set('#siRestart', s.restart_pending ? '有（点「保存并应用」生效）' : '无');
   }
+
+  /* 「断开连接 / 连接」按钮: 断开中它变成主按钮, 同时禁用「重新认证」
+     （那个接口要求当前已认证, 断开状态下必然 403, 不如直接禁用） */
+  const btnConn = $('#btnDisconnect');
+  if (btnConn) {
+    btnConn.textContent = offline ? '连接' : '断开连接';
+    btnConn.classList.toggle('btn--accent', offline);
+    btnConn.classList.toggle('btn--danger', !offline);
+    btnConn.disabled = a.reachable === false;
+  }
+  const btnReauth = $('#btnReauth');
+  if (btnReauth) btnReauth.disabled = offline;
 }
 
 /* ------------------------------ 配置读写 -------------------------------- */
@@ -450,6 +475,41 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* ------------------------------ 连接开关 --------------------------------- */
+
+/**
+ * 断开 / 连接。
+ *
+ * 「断开」= 登出（服务端会话真的被释放，不是本地假断开），之后程序不再自动
+ * 重连，直到点「连接」。后端是幂等的，重复点不会出错。
+ *
+ * 状态不会在 204 之后立刻翻转：断开要等认证线程退出、在 clean() 里跑完 term()，
+ * 所以这里补两次延迟刷新，让界面跟得上（正常情况下 3 秒的轮询也会纠正它）。
+ */
+async function toggleConnection() {
+  const offline = state.auth && state.auth.offline === true;
+
+  if (!offline && !confirm('断开连接？\n会先登出当前会话（服务端下线），' +
+                           '之后程序不再自动重连，直到你点「连接」。')) {
+    return;
+  }
+
+  try {
+    const res = await api('/api/' + (offline ? 'connect' : 'disconnect'), { method: 'POST' });
+    if (res.status === 204) {
+      toast(offline ? '已请求连接，正在重新认证' : '已请求断开连接，正在登出', 'ok');
+      setTimeout(pollStatus, 800);
+      setTimeout(pollStatus, 2600);
+    } else if (res.status === 503) {
+      toast('认证进程不可达，请检查程序是否在运行', 'err');
+    } else {
+      toast('请求失败：HTTP ' + res.status, 'err');
+    }
+  } catch (e) {
+    toast('请求失败：' + e.message, 'err');
+  }
+}
+
 /* ------------------------------- 事件绑定 -------------------------------- */
 
 function bind() {
@@ -471,6 +531,8 @@ function bind() {
       else toast('请求失败：HTTP ' + res.status, 'err');
     } catch (e) { toast('请求失败：' + e.message, 'err'); }
   });
+
+  $('#btnDisconnect').addEventListener('click', toggleConnection);
 
   $('#btnPeek').addEventListener('click', () => {
     const p = $('#fPass');

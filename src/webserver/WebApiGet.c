@@ -40,6 +40,29 @@ bool query_is_authed(bool* out)
 }
 
 /**
+ * @brief 查询"用户是否已主动断开连接"
+ * @param out 是否处于主动断开状态
+ * @return 是否查询成功 (Web 进程连不上认证进程时为 false)
+ */
+bool query_is_manual_offline(bool* out)
+{
+    if (out == NULL) return false;
+
+    if (s_local_state)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0) return false;
+        *out = g_prog_status[0].runtime_status.is_manual_offline;
+        return true;
+    }
+
+    control_status_t status;
+    if (control_query_status(&status) == false) return false;
+
+    *out = status.is_manual_offline;
+    return true;
+}
+
+/**
  * @brief 读取日志文件内容
  * @param name 日志文件名
  * @param out 输出内容 (需要 free)
@@ -119,10 +142,15 @@ bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm)
         bool is_authed = false;
         const bool reachable = query_is_authed(&is_authed);
 
+        bool offline = false;
+        query_is_manual_offline(&offline);
+
         cJSON* auth = cJSON_CreateObject();
         cJSON_AddBoolToObject(auth, "status", is_authed);
         // 认证进程不可达时额外标出来, 前端可据此提示 (不认这个字段的前端会忽略它)
         cJSON_AddBoolToObject(auth, "reachable", reachable);
+        // 用户主动断开中: 已认证为假是"预期行为", 前端不该提示异常
+        cJSON_AddBoolToObject(auth, "offline", offline);
         char* status_str = cJSON_Print(auth);
         mg_http_reply(c, 200, HEADER_JSON, "%s", status_str);
         free(status_str);

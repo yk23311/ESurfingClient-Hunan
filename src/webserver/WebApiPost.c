@@ -46,6 +46,39 @@ static bool request_apply_config()
 }
 
 /**
+ * @brief 请求断开连接 (登出并停止自动重连)
+ * @return 是否成功
+ */
+static bool request_disconnect()
+{
+    if (s_local_state)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0) return false;
+        g_prog_status[0].runtime_status.is_manual_offline = true;
+        g_prog_status[0].runtime_status.is_need_reauth = true;
+        return true;
+    }
+
+    return control_disconnect();
+}
+
+/**
+ * @brief 请求重新连接 (解除断开状态)
+ * @return 是否成功
+ */
+static bool request_connect()
+{
+    if (s_local_state)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0) return false;
+        g_prog_status[0].runtime_status.is_manual_offline = false;
+        return true;
+    }
+
+    return control_connect();
+}
+
+/**
  * @brief 处理 POST API 请求
  * @return 是否已处理
  */
@@ -185,6 +218,59 @@ bool handle_api_post(struct mg_connection* c, struct mg_http_message* hm)
             else
             {
                 LOG_INFO("收到 Web 重新认证请求, 认证线程将重新进行认证");
+                mg_http_reply(c, 204, "", "");
+            }
+        }
+
+        free(data);
+        return true;
+    }
+
+    // 断开连接 / 重新连接
+    if (mg_match(hm->uri, mg_str("/api/disconnect"), NULL) ||
+        mg_match(hm->uri, mg_str("/api/connect"), NULL))
+    {
+        const bool want_offline = mg_match(hm->uri, mg_str("/api/disconnect"), NULL);
+
+        if (g_prog_status == NULL || g_cfg_loaded == false)
+        {
+            LOG_WARN("收到 Web %s请求, 但程序尚未加载配置, 拒绝操作",
+                     want_offline ? "断开连接" : "连接");
+            mg_http_reply(c, 503, "", "");
+        }
+        else
+        {
+            bool offline = false;
+
+            /**
+             * 不要求"当前已认证": 断开还有一个真实用途是**喊停重试** ——
+             * 账号密码错时认证线程会按 1/5/10/20/30 分钟的退避一直重试,
+             * 用户要能把它停下来。那种状态下 is_authed 本来就是假。
+             */
+            if (query_is_manual_offline(&offline) == false)
+            {
+                LOG_WARN("收到 Web %s请求, 但认证进程不可达",
+                         want_offline ? "断开连接" : "连接");
+                mg_http_reply(c, 503, "", "");
+            }
+            else if (offline == want_offline)
+            {
+                // 已经是目标状态: 幂等返回, 不当作错误
+                mg_http_reply(c, 204, "", "");
+            }
+            else if ((want_offline ? request_disconnect() : request_connect()) == false)
+            {
+                LOG_WARN("收到 Web %s请求, 但下发到认证进程失败",
+                         want_offline ? "断开连接" : "连接");
+                mg_http_reply(c, 503, "", "");
+            }
+            else
+            {
+                if (want_offline)
+                    LOG_INFO("收到 Web 断开连接请求, 将登出并停止自动重连");
+                else
+                    LOG_INFO("收到 Web 连接请求, 将重新认证");
+
                 mg_http_reply(c, 204, "", "");
             }
         }

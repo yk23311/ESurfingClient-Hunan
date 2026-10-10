@@ -41,6 +41,19 @@ static RunStatus run()
     static uint8_t retry_auth = 1;
     static uint64_t retry_auth_time = 0;
 
+    /**
+     * 用户主动断开: 不碰网络。
+     *
+     * 正常路径走不到这里 —— 断开请求同时置了 is_need_reauth, 线程会退出循环、
+     * 在 clean() 里登出, 之后线程守护不再重启它。这里是防"标志还在、线程却被重新
+     * 拉起来" (配置变更 / 时间窗口切换等路径) 的那一道闸: 宁可空转, 也不自作主张重连。
+     */
+    if (g_prog_status[tl_thread_idx].runtime_status.is_manual_offline)
+    {
+        sleep_ms(1000, false);
+        return RUN_SUCCESS;
+    }
+
     // 时间控制/重置请求优先于一切网络操作：
     // 到点下线后不应再发送心跳包，也不应继续认证或重试。
     if (g_prog_status[tl_thread_idx].runtime_status.is_time_disabled)
@@ -419,6 +432,12 @@ void work()
                 if (g_prog_status[i].runtime_status.is_time_disabled)
                 {
                     // 时间控制禁用中，不重启该线程；等时间控制线程在允许时段再放行
+                    continue;
+                }
+
+                if (g_prog_status[i].runtime_status.is_manual_offline)
+                {
+                    // 用户主动断开：不自作主张重连，等 Web 端下发「连接」后这里自然放行
                     continue;
                 }
 

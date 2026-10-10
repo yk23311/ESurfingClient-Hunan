@@ -124,6 +124,7 @@ static void ctl_reply_status(char* reply, const size_t reply_len)
     bool is_authed = false;
     bool is_running = false;
     bool is_time_disabled = false;
+    bool is_manual_offline = false;
 
     if (g_prog_status != NULL && g_prog_cnt > 0)
     {
@@ -131,12 +132,14 @@ static void ctl_reply_status(char* reply, const size_t reply_len)
         is_authed = g_prog_status[0].runtime_status.is_authed;
         is_running = g_prog_status[0].runtime_status.is_running;
         is_time_disabled = g_prog_status[0].runtime_status.is_time_disabled;
+        is_manual_offline = g_prog_status[0].runtime_status.is_manual_offline;
     }
 
     cJSON_AddNumberToObject(data, "account", account);
     cJSON_AddBoolToObject(data, "is_authed", is_authed);
     cJSON_AddBoolToObject(data, "is_running", is_running);
     cJSON_AddBoolToObject(data, "is_time_disabled", is_time_disabled);
+    cJSON_AddBoolToObject(data, "is_manual_offline", is_manual_offline);
 
     cJSON_AddBoolToObject(root, "ok", true);
     cJSON_AddItemToObject(root, "data", data);
@@ -238,6 +241,42 @@ static void ctl_dispatch(const char* request, char* reply, const size_t reply_le
             LOG_INFO("控制通道收到应用新配置请求");
             g_cfg_loaded = false;
             g_prog_status[0].runtime_status.is_need_reauth = true;
+            ctl_reply_result(reply, reply_len, true, NULL);
+        }
+    }
+    else if (strcmp(cmd, "disconnect") == 0)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0)
+        {
+            ctl_reply_result(reply, reply_len, false, "config not loaded");
+        }
+        else
+        {
+            /**
+             * 只置标志, 不在这里登出: 真正的 term() 由认证线程退出时在 clean() 里跑
+             * (那里才持有会话与加解密工厂)。is_need_reauth 让 run() 立刻返回、
+             * 主循环随之退出 —— 本函数跑在控制服务线程上, 不该去碰会话状态。
+             */
+            LOG_INFO("控制通道收到断开连接请求, 认证线程将登出并停止自动重连");
+            g_prog_status[0].runtime_status.is_manual_offline = true;
+            g_prog_status[0].runtime_status.is_need_reauth = true;
+            ctl_reply_result(reply, reply_len, true, NULL);
+        }
+    }
+    else if (strcmp(cmd, "connect") == 0)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0)
+        {
+            ctl_reply_result(reply, reply_len, false, "config not loaded");
+        }
+        else
+        {
+            /**
+             * 清掉标志就够了: 认证线程已经结束, 线程守护看到 is_running 为假且
+             * 不再被这个标志拦住, 下一轮就会把线程重新拉起来
+             */
+            LOG_INFO("控制通道收到连接请求, 认证线程将重新认证");
+            g_prog_status[0].runtime_status.is_manual_offline = false;
             ctl_reply_result(reply, reply_len, true, NULL);
         }
     }

@@ -35,6 +35,12 @@
 #define LOCATION_LEN 512
 #define LAST_LOCATION_LEN 1024
 
+/**
+ * 门户地址提示 (BAS 注入的 302 Location) 的缓冲长度。
+ * 实测那条 URL 约 110 字节, 128 够用; 超长会在快照处被截断并记一条 WARN。
+ */
+#define PORTAL_HINT_LEN 128
+
 #define CONTROL_TOKEN_LEN 33
 
 #define CONTROL_TOKEN_ENV "ESURFING_CONTROL_TOKEN"
@@ -137,6 +143,17 @@ typedef struct
     bool is_authed;
     bool is_need_reauth;
     bool is_time_disabled;
+
+    /**
+     * 用户主动断开 (Web 端「断开连接」)。
+     *
+     * 语义是"登出之后不要自动重连", 直到用户点「连接」:
+     *   · 置上时同时置 is_need_reauth → 认证线程退出循环 → clean() 里跑 term() 登出
+     *   · clean() 会 memset 整个 runtime_status, 所以这个标志必须像 is_time_disabled
+     *     一样被显式保存/恢复, 否则线程守护会立刻把它重新拉起来 (等于没断开)
+     *   · 线程不再被重启, 因此断开期间**没有任何网络流量**
+     */
+    bool is_manual_offline;
 } runtime_status_t;
 
 typedef struct
@@ -148,6 +165,21 @@ typedef struct
     sim_thread_t* thread;
     char last_location[LAST_LOCATION_LEN * 2];
     bool last_location_lock;
+
+    /**
+     * 判定"需要认证"那一刻的 Location 快照 —— 也就是 BAS 注入的那条门户 URL。
+     *
+     * 为什么不直接读 last_location: get_last_location() 会**跟随 302** 并不断覆盖
+     * last_location。今天湖南的门户页在未认证时返回 200, 所以那个循环不会跑,
+     * last_location 恰好停在注入地址上 —— 属于"碰巧对"。而实测已认证时同一个
+     * index.cgi 会 302 到一个被动态防护挡着的网页门户 (412/403), 一旦哪里先跳到
+     * 那里, last_location 就不再是能用的 API 基址了。快照让这件事变成"构造上对"。
+     *
+     * 放在 prog_status_t 而不是 auth_cfg_t: clean() 会 memset 掉 auth_cfg, 而
+     * reset() 恰好在 auth() 之前调用 (DialerClient.c 的 STATUS_NEED_AUTH 分支),
+     * 放 auth_cfg 里会被清空。
+     */
+    char portal_hint[PORTAL_HINT_LEN];
 } prog_status_t;
 
 #ifdef _WIN32

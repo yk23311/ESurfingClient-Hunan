@@ -499,6 +499,13 @@ html[data-theme="dark"] .btn { background: rgba(255,255,255,.08); }
 
 .btn--ghost { background: transparent; border-color: transparent; color: var(--text-2); }
 .btn--ghost:hover { background: var(--surface-hover); color: var(--text); }
+
+/* 「断开连接」: 破坏性动作, 用错误色描边而不是实心 —— 一张卡上只该有一个主按钮。
+   断开之后 JS 会把它换成 btn--accent 的「连接」。 */
+.btn--danger { background: transparent; color: var(--err); border-color: var(--err-soft); }
+.btn--danger:hover { background: var(--err-soft); border-color: var(--err); }
+.btn--danger:active { background: var(--err-soft); }
+
 .btn--sm { height: 26px; padding: 0 10px; font-size: 12px; }
 
 .actions {

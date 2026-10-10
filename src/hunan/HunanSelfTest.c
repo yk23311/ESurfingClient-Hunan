@@ -17,6 +17,8 @@
 
 #include "hunan/HunanXml.h"
 
+#include "utils/UrlParse.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -194,6 +196,157 @@ static int check_xml(const char* plain, hunan_endpoint_t ep)
     return ok;
 }
 
+/* ------------------------------------------------------------------
+ * 门户地址解析: 纯函数, 不联网。
+ *
+ * 样本取自真实日志。未认证时 BAS 会把明文 HTTP 劫持成 302, 那个 Location 里
+ * 直接带着门户地址与 mscgip —— 门户地址因此是"接入设备送上门"的, 既不用配置
+ * 也不用扫网段 (实测门户和 mscgip 都在公网段, 扫本地网段毫无意义):
+ *   2026-10-09 21:50 / 22:04 / 22:14 / 22:36 / 22:45   五份日志
+ *   2026-10-10 12:16                                    run.log
+ *
+ * 解析错了会把 ticket/auth 发到不存在的地址上, 所以这里逐条钉死。
+ * ------------------------------------------------------------------ */
+
+typedef struct
+{
+    const char* url;
+    const char* host; /* NULL = 应当解析失败 */
+    unsigned    port;
+} url_case_t;
+
+typedef struct
+{
+    const char* url;
+    const char* name;
+    const char* value; /* NULL = 应当取不到 */
+} query_case_t;
+
+static int check_portal_parse()
+{
+    static const url_case_t urls[] = {
+        /* --- 真实样本 (同一台接入设备, 三次不同客户端 IP) --- */
+        { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.223.57"
+          "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
+        { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.199.113"
+          "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
+        { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.205.124"
+          "&mscgip=218.75.255.245&wlanusermac=e8-b0-c5-18-31-8e", "175.12.104.1", 10001 },
+        /* --- 缺省端口 / https / 主机名 --- */
+        { "http://10.0.0.1/index.cgi", "10.0.0.1", 80 },
+        { "https://portal.example.com/x", "portal.example.com", 443 },
+        { "http://portal.example.com:8080/x", "portal.example.com", 8080 },
+        /* --- userinfo 要丢掉 --- */
+        { "http://user:pw@10.0.0.1:8080/x", "10.0.0.1", 8080 },
+        /* --- IPv6 字面量: 方括号要保留, curl 需要它 --- */
+        { "http://[2001:db8::1]:8080/x", "[2001:db8::1]", 8080 },
+        /* --- 以下都应解析失败 --- */
+        { "", NULL, 0 },
+        { "/index.cgi?wlanuserip=1.2.3.4", NULL, 0 }, /* 相对地址: 宁可不猜 */
+        { "ftp://10.0.0.1/x", NULL, 0 },
+        { "http:///index.cgi", NULL, 0 }, /* 空主机 */
+        { "http://:10001/x", NULL, 0 },
+        { "http://10.0.0.1:/x", NULL, 0 }, /* 空端口 */
+        { "http://10.0.0.1:0/x", NULL, 0 },
+        { "http://10.0.0.1:65536/x", NULL, 0 },
+        { "http://10.0.0.1:abc/x", NULL, 0 },
+        { "http://10.0.0.1:12a/x", NULL, 0 },
+        { "http://a b/x", NULL, 0 }, /* 主机名里有空白 */
+    };
+
+    static const query_case_t queries[] = {
+        { "http://h/i.cgi?wlanuserip=100.67.223.57&mscgip=218.75.255.245"
+          "&wlanusermac=cc-28-aa-4b-b6-d5", "mscgip", "218.75.255.245" },
+        /* 第一个参数 (紧跟 '?') 也要取得到 */
+        { "http://h/i.cgi?wlanuserip=100.67.223.57&mscgip=218.75.255.245",
+          "wlanuserip", "100.67.223.57" },
+        /* 广东的写法 */
+        { "http://h/i.cgi?wlanacip=1.2.3.4", "wlanacip", "1.2.3.4" },
+        /* 不能把 xmscgip 当成 mscgip */
+        { "http://h/i.cgi?xmscgip=9.9.9.9", "mscgip", NULL },
+        /* 值的结束符是 '&' 或 '#' */
+        { "http://h/i.cgi?mscgip=1.1.1.1#frag", "mscgip", "1.1.1.1" },
+        /* 空值 = "取到了但长度为 0", 调用方据此保留配置值 */
+        { "http://h/i.cgi?mscgip=&x=1", "mscgip", "" },
+        /* 压根没有这个参数 */
+        { "http://h/i.cgi?wlanuserip=1.2.3.4", "mscgip", NULL },
+        /* 参数名只出现在路径里, 不算 */
+        { "http://h/mscgip=1.1.1.1", "mscgip", NULL },
+    };
+
+    const size_t url_count = sizeof(urls) / sizeof(urls[0]);
+    const size_t query_count = sizeof(queries) / sizeof(queries[0]);
+    size_t url_pass = 0;
+    size_t query_pass = 0;
+
+    printf("\n门户地址解析 (BAS 注入的 302 Location)\n");
+    printf("------------------------------------------------------------\n");
+
+    for (size_t i = 0; i < url_count; ++i)
+    {
+        char host[64] = {0};
+        uint16_t port = 0;
+        const bool got = url_split_host_port(urls[i].url, host, sizeof(host), &port);
+
+        const bool pass = (urls[i].host == NULL)
+                              ? (got == false)
+                              : (got && strcmp(host, urls[i].host) == 0 && port == urls[i].port);
+
+        if (pass)
+        {
+            url_pass++;
+            continue;
+        }
+
+        char actual[96];
+        if (got) snprintf(actual, sizeof(actual), "%s:%u", host, (unsigned)port);
+        else snprintf(actual, sizeof(actual), "(解析失败)");
+
+        if (urls[i].host == NULL)
+            printf("  ✗ %-58.58s 期望失败, 实际 %s\n", urls[i].url, actual);
+        else
+            printf("  ✗ %-58.58s 期望 %s:%u, 实际 %s\n",
+                   urls[i].url, urls[i].host, urls[i].port, actual);
+    }
+
+    for (size_t i = 0; i < query_count; ++i)
+    {
+        const char* value = NULL;
+        size_t value_len = 0;
+        const bool got = url_find_query_value(queries[i].url, queries[i].name, &value, &value_len);
+
+        const bool pass = (queries[i].value == NULL)
+                              ? (got == false)
+                              : (got && value_len == strlen(queries[i].value)
+                                 && strncmp(value, queries[i].value, value_len) == 0);
+
+        if (pass)
+        {
+            query_pass++;
+            continue;
+        }
+
+        char actual[64];
+        if (got)
+            snprintf(actual, sizeof(actual), "\"%.*s\"", (int)(value_len > 40 ? 40 : value_len), value);
+        else
+            snprintf(actual, sizeof(actual), "(取不到)");
+
+        if (queries[i].value == NULL)
+            printf("  ✗ %-50.50s %-10s 期望取不到, 实际 %s\n",
+                   queries[i].url, queries[i].name, actual);
+        else
+            printf("  ✗ %-50.50s %-10s 期望 \"%s\", 实际 %s\n",
+                   queries[i].url, queries[i].name, queries[i].value, actual);
+    }
+
+    printf("主机端口 %zu/%zu, 查询参数 %zu/%zu  %s\n",
+           url_pass, url_count, query_pass, query_count,
+           (url_pass == url_count && query_pass == query_count) ? "✓" : "✗");
+
+    return (url_pass == url_count && query_pass == query_count) ? 1 : 0;
+}
+
 int main(int argc, char** argv)
 {
     const char* dir = (argc > 1) ? argv[1] : "C:\\temp\\zx\\extracted";
@@ -202,6 +355,12 @@ int main(int argc, char** argv)
     printf("湖南离线自检 (不联网)\n");
     printf("样本目录: %s\n", dir);
     printf("Algo-ID : %s\n", algo);
+    printf("------------------------------------------------------------\n");
+
+    /* 门户解析不依赖样本目录, 先跑 —— 样本缺失时它的结论照样有效 */
+    const int portal_ok = check_portal_parse();
+
+    printf("\n官方抓包逐字节验收\n");
     printf("------------------------------------------------------------\n");
 
     cipher_interface_t* c = create_aes_double_cbc_hunan_cipher(
@@ -227,7 +386,7 @@ int main(int argc, char** argv)
             printf("  ✗ 找不到样本: %s\n", pattern);
             c->destroy(c);
             free(files);
-            return 1;
+            return portal_ok ? 0 : 1;
         }
         do
         {
@@ -259,7 +418,7 @@ int main(int argc, char** argv)
         printf("  ✗ 目录里没有 req_*.bin 样本\n");
         c->destroy(c);
         free(files);
-        return 1;
+        return portal_ok ? 0 : 1;
     }
 
     /* 简单插入排序, 让输出稳定 */
@@ -337,11 +496,11 @@ int main(int argc, char** argv)
     printf("------------------------------------------------------------\n");
     printf("合计 %d 份样本: 密码层 %d/%d, 报文层 %d/%d\n",
            total, crypto_ok, total, xml_ok, total);
-    printf("%s\n", (crypto_ok == total && xml_ok == total) ? "✓ 全部通过" : "✗ 存在失败项");
+    printf("%s\n", (crypto_ok == total && xml_ok == total && portal_ok) ? "✓ 全部通过" : "✗ 存在失败项");
 
     for (int i = 0; i < nfiles; ++i) free(files[i]);
     free(files);
     free(hexbuf);
     c->destroy(c);
-    return (crypto_ok == total && xml_ok == total) ? 0 : 1;
+    return (crypto_ok == total && xml_ok == total && portal_ok) ? 0 : 1;
 }

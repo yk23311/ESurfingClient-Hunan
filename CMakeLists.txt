@@ -115,6 +115,7 @@ add_executable(ESurfingClient
         src/utils/LogFile.c
         src/utils/LogMeta.c
         src/utils/StrUtil.c
+        src/utils/UrlParse.c
         src/utils/LogDir.c
         src/utils/Xml.c
         src/Main.c
@@ -212,6 +213,7 @@ if (BUILD_HUNAN_SELFTEST)
             src/cipher/algo/hunan/aes_double_cbc_hunan.c
             src/cipher/CipherUtils.c
             src/utils/sim/SimEvpAes.c
+            src/utils/UrlParse.c
     )
     target_include_directories(hunan_selftest PRIVATE
             ${CMAKE_SOURCE_DIR}/include

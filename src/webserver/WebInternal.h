@@ -26,6 +26,9 @@ typedef struct
 /* WebApiGet.c */
 bool query_is_authed(bool* out);
 
+/* WebApiGet.c: 用户是否已主动断开连接 (Web 端据此把按钮切成「连接」) */
+bool query_is_manual_offline(bool* out);
+
 bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm);
 
 /* WebApiPost.c */
