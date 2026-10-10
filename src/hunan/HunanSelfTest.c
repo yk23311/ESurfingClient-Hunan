@@ -226,7 +226,7 @@ static int check_portal_parse()
 {
     static const url_case_t urls[] = {
         /* --- 真实样本 (同一台接入设备, 三次不同客户端 IP) --- */
-        { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.223.57"
+        { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.199.113"
           "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
         { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.199.113"
           "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
@@ -255,11 +255,11 @@ static int check_portal_parse()
     };
 
     static const query_case_t queries[] = {
-        { "http://h/i.cgi?wlanuserip=100.67.223.57&mscgip=218.75.255.245"
+        { "http://h/i.cgi?wlanuserip=100.67.199.113&mscgip=218.75.255.245"
           "&wlanusermac=cc-28-aa-4b-b6-d5", "mscgip", "218.75.255.245" },
         /* 第一个参数 (紧跟 '?') 也要取得到 */
-        { "http://h/i.cgi?wlanuserip=100.67.223.57&mscgip=218.75.255.245",
-          "wlanuserip", "100.67.223.57" },
+        { "http://h/i.cgi?wlanuserip=100.67.199.113&mscgip=218.75.255.245",
+          "wlanuserip", "100.67.199.113" },
         /* 广东的写法 */
         { "http://h/i.cgi?wlanacip=1.2.3.4", "wlanacip", "1.2.3.4" },
         /* 不能把 xmscgip 当成 mscgip */

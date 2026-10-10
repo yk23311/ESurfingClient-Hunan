@@ -82,7 +82,7 @@ static void reset_mac_addr()
  * 与广东的关键差别 (全部有官方抓包与实测支撑):
  *   · Algo-ID  **固定** FAB1DCDE-…, 不做算法协商 (门户不下发 ZSM)
  *   · client-id 官方是固定值, 不是随机 UUID
- *   · mac 是**真实网卡** MAC, 格式 CC-28-AA-4B-B6-D5 (广东是随机值、冒号分隔)
+ *   · mac 是**真实网卡** MAC, 格式 AA-BB-CC-DD-EE-FF (广东是随机值、冒号分隔)
  *   · host-name 是真实计算机名大写 (广东随机 10 位十六进制)
  *   · ac_ip 填**真实默认网关** —— 湖南报文的 <gwip> 就是它
  */

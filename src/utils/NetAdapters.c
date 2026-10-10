@@ -15,14 +15,14 @@ typedef struct
 {
     char ip[IP_LEN];
     char name[NAME_LENGTH];
-    char mac[MAC_ADDR_LEN];   /* 大写、横线分隔: CC-28-AA-4B-B6-D5 */
+    char mac[MAC_ADDR_LEN];   /* 大写、横线分隔: AA-BB-CC-DD-EE-FF */
     char gateway[IP_LEN];
 } adapter_t;
 
 static adapter_t* s_adaptor = NULL;
 static uint8_t s_adaptor_count = 0;
 
-/* 把 6 字节 MAC 写成 CC-28-AA-4B-B6-D5 (湖南报文要的形式) */
+/* 把 6 字节 MAC 写成 AA-BB-CC-DD-EE-FF (湖南报文要的形式) */
 static void mac_to_dashed(const unsigned char* raw, const unsigned raw_len, char* out, const size_t cap)
 {
     out[0] = '\0';

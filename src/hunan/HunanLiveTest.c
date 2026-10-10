@@ -49,7 +49,7 @@ typedef struct
     int    port;
     char   user_ip[64];
     char   user_mac[64];   /* 查询串用: 12 位小写 hex */
-    char   mac_dashed[32]; /* 报文里用: CC-28-AA-4B-B6-D5 */
+    char   mac_dashed[32]; /* 报文里用: AA-BB-CC-DD-EE-FF */
     char   mscgip[64];
     char   gateway[64];
     char   hostname[128];

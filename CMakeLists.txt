@@ -211,6 +211,7 @@ if (BUILD_HUNAN_SELFTEST)
             src/hunan/HunanSelfTest.c
             src/hunan/HunanXml.c
             src/cipher/algo/hunan/aes_double_cbc_hunan.c
+            src/cipher/KeyData.c
             src/cipher/CipherUtils.c
             src/utils/sim/SimEvpAes.c
             src/utils/UrlParse.c
