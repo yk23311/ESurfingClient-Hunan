@@ -20,14 +20,29 @@
  * 直接就能判定 STATUS_NEED_AUTH。只有连 HTTP 响应都收不到时才会走到这里。
  * 但那时若仍去探广东的 IP, 湖南这边必然全失败 → 被误判成 CONNECT_ERROR,
  * 于是程序认定"网络有问题", 根本不会去认证。
+ *
+ * 取值优先用**上一次接入设备下发的**门户 (runtime_portal), 没有才回退配置里的:
+ * 配置里的地址是抓包抄来的旧值, 接入设备一换就探不通; 而下发值至少是这台机器
+ * 上次真被重定向到的地方。注意本函数在 302 **之前**调用, 所以只有进程启动过
+ * 至少一次认证尝试后才有下发值 —— 首次运行仍走配置, 这是无法回避的次序。
  */
 static const char* auth_probe_url(char* buf, const size_t cap)
 {
     const login_cfg_t* lc = &g_prog_status[tl_thread_idx].login_cfg;
-    if (lc->province == PROVINCE_HUNAN && lc->portal[0])
+    if (lc->province == PROVINCE_HUNAN)
     {
-        snprintf(buf, cap, "http://%s:%" PRIu16, lc->portal, lc->portal_port);
-        return buf;
+        const prog_status_t* ps = &g_prog_status[tl_thread_idx];
+
+        if (ps->portal_source[0] != '\0' && ps->runtime_portal[0] != '\0')
+        {
+            snprintf(buf, cap, "http://%s:%" PRIu16, ps->runtime_portal, ps->runtime_portal_port);
+            return buf;
+        }
+        if (lc->portal[0])
+        {
+            snprintf(buf, cap, "http://%s:%" PRIu16, lc->portal, lc->portal_port);
+            return buf;
+        }
     }
     return AUTH_URL;
 }

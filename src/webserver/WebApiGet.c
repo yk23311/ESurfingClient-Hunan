@@ -124,6 +124,48 @@ static bool read_log_file(const char* name, char** out, size_t* out_len, bool* t
 }
 
 /**
+ * @brief 读取"上一次认证实际采用的门户地址"
+ *
+ * 网页界面用它如实显示程序在连哪 —— 配置里的 portal 只是**回退值**, 未认证时
+ * 真实地址由接入设备在 302 里下发 (见 DialerAuth.c 的 discover_hunan)。
+ * 用户看到设置页写着 175.12.104.1, 自然会以为那就是程序在用的地址, 其实不是。
+ *
+ * 多账号取启动最早的那个有值的账号: 页面本来也只编辑第 0 个账号。
+ *
+ * 无锁读: 写方只有认证线程, 且写进去的字符串要么是完整 IP 要么是空 —— 页面
+ * 读到一半的极端情况最多显示一个畸形地址, 不影响任何控制流 (凭据不在此列)。
+ *
+ * @param portal 输出: 门户地址, 没值时为 ""
+ * @param cap    输出缓冲长度
+ * @param port   输出: 门户端口, 没值时为 0
+ * @param source 输出: "dhcp" / "config" / ""
+ * @param src_cap 输出缓冲长度
+ * @return 是否取到值
+ */
+static bool query_live_portal(char* portal, size_t cap, uint16_t* port,
+                              char* source, size_t src_cap)
+{
+    portal[0] = '\0';
+    source[0] = '\0';
+    *port = 0;
+
+    if (g_prog_status == NULL || g_prog_cnt <= 0) return false;
+
+    for (int8_t i = 0; i < g_prog_cnt; i++)
+    {
+        const prog_status_t* ps = &g_prog_status[i];
+        if (ps->portal_source[0] == '\0' || ps->runtime_portal[0] == '\0') continue;
+
+        snprintf(portal, cap, "%s", ps->runtime_portal);
+        *port = ps->runtime_portal_port;
+        snprintf(source, src_cap, "%s", ps->portal_source);
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * @brief 处理 GET API 请求
  * @return 是否已处理 (未处理时需要继续走静态文件逻辑)
  */
@@ -198,6 +240,32 @@ bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm)
         cJSON_AddBoolToObject(info, "restart_pending", g_need_restart);
         cJSON_AddNumberToObject(info, "account_count", g_prog_cnt);
         cJSON_AddNumberToObject(info, "thread_count", g_prog_cnt);
+
+        /**
+         * 上一次认证实际采用的门户。设置页那两栏是**回退值**, 用户很容易误以为
+         * 那就是程序在用的地址 —— 这里把真实值单独给出来, 让界面能并排显示。
+         */
+        {
+            char live_portal[64];
+            char live_source[8];
+            uint16_t live_port = 0;
+
+            if (query_live_portal(live_portal, sizeof(live_portal), &live_port,
+                                  live_source, sizeof(live_source)))
+            {
+                cJSON_AddStringToObject(info, "portal_live", live_portal);
+                cJSON_AddNumberToObject(info, "portal_live_port", live_port);
+                cJSON_AddStringToObject(info, "portal_source", live_source);
+            }
+            else
+            {
+                /* 尚未判定过: 程序刚起来, 或本来就已认证 (没有 302 可看) */
+                cJSON_AddStringToObject(info, "portal_live", "");
+                cJSON_AddNumberToObject(info, "portal_live_port", 0);
+                cJSON_AddStringToObject(info, "portal_source", "");
+            }
+        }
+
         char* info_str = cJSON_Print(info);
         mg_http_reply(c, 200, HEADER_JSON, "%s", info_str);
         free(info_str);

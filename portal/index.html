@@ -166,24 +166,38 @@
           <label class="field__label" for="fProvince">认证流程</label>
           <select class="input" id="fProvince">
             <option value="guangdong">广东（运行时发现门户与端点）</option>
-            <option value="hunan">湖南（固定门户与端点）</option>
+            <option value="hunan">湖南（端点固定，门户由接入设备下发）</option>
           </select>
           <div class="field__hint">湖南不做算法协商：Algo-ID 固定、密钥在本地。选错省份会认证失败。</div>
         </div>
         <div class="field-row">
           <div class="field">
-            <label class="field__label" for="fPortal">门户地址</label>
+            <label class="field__label" for="fPortal">回退门户地址</label>
             <input class="input" id="fPortal" type="text" spellcheck="false" placeholder="175.12.104.1" />
           </div>
           <div class="field field--narrow">
-            <label class="field__label" for="fPortalPort">端口</label>
+            <label class="field__label" for="fPortalPort">回退端口</label>
             <input class="input" id="fPortalPort" type="number" min="1" max="65535" placeholder="10001" />
           </div>
         </div>
+        <div class="field__hint">
+          未认证时接入设备会把门户地址随 302 一起下发，程序优先用它；这里填的只是
+          <strong>设备没下发时</strong>的兜底值，不会被运行时值覆盖。
+        </div>
+
+        <!-- 程序实际在连哪 —— 只读，由 /api/status/sys 提供 -->
+        <div class="live-row" id="portalLive">
+          <span class="live-row__dot"></span>
+          <span class="live-row__text">
+            当前实际使用：<b class="mono" id="portalLiveAddr">—</b>
+            <span class="live-row__nl" id="portalLiveNote"></span>
+          </span>
+        </div>
+
         <div class="field">
-          <label class="field__label" for="fMscgip">接入设备地址 (mscgip)</label>
+          <label class="field__label" for="fMscgip">回退接入设备地址 (mscgip)</label>
           <input class="input" id="fMscgip" type="text" spellcheck="false" placeholder="218.75.255.245" />
-          <div class="field__hint">只用于拼接请求的查询串；实测留空也能通过</div>
+          <div class="field__hint">只用于拼接请求的查询串；实测留空也能通过。同样会被接入设备下发的值覆盖</div>
         </div>
       </div>
 
@@ -275,8 +289,9 @@
 
       <div class="card">
         <p class="prose">
-          湖南版在原有广东实现的基础上增加了省份适配：固定门户与端点、静态算法档、
-          真实网卡身份。协议参数由 32 份官方抓包逐字节核对，并在真实门户上实测验证。
+          湖南版在原有广东实现的基础上增加了省份适配：固定端点（一组 .cgi 名）、静态算法档、
+          真实网卡身份。门户地址不写死 —— 未认证时接入设备会把它随 302 一起下发，
+          配置里那份只是回退值。协议参数由 32 份官方抓包逐字节核对，并在真实门户上实测验证。
         </p>
         <p class="prose">
           网页界面为自包含实现，<strong>不引用任何外部资源</strong> ——
@@ -288,7 +303,19 @@
       <div class="card">
         <div class="kv">
           <div class="kv__row"><span class="kv__k">本机地址</span><span class="kv__v mono" id="abUrl">—</span></div>
+          <div class="kv__row">
+            <span class="kv__k">实际使用门户</span>
+            <span class="kv__v mono" id="abPortal">—</span>
+          </div>
+          <div class="kv__row">
+            <span class="kv__k">门户来源</span>
+            <span class="kv__v" id="abPortalSrc">—</span>
+          </div>
           <div class="kv__row"><span class="kv__k">上游项目</span><span class="kv__v"><a href="https://github.com/BadGhost520/ESurfingClient-CVersion" target="_blank" rel="noreferrer">BadGhost520/ESurfingClient-CVersion</a></span></div>
+        </div>
+        <div class="field__hint" id="abPortalHint">
+          未认证时接入设备会在 302 里下发门户地址，程序优先使用它；这里显示的是
+          <strong>上一次认证实际采用</strong>的地址，不是配置里那份回退值。
         </div>
       </div>
     </section>

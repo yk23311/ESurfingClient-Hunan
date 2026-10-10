@@ -65,9 +65,12 @@ static bool discover_hunan()
 
     char portal[64];
     uint16_t portal_port = 0;
+    bool from_device = false;
 
     if (hint[0] != '\0' && url_split_host_port(hint, portal, sizeof(portal), &portal_port))
     {
+        from_device = true;
+
         if (strcmp(portal, lc->portal) != 0 || portal_port != lc->portal_port)
         {
             LOG_INFO("湖南: 门户改用接入设备下发的 %s:%" PRIu16 " (配置里是 %s:%" PRIu16 ")",
@@ -85,6 +88,20 @@ static bool discover_hunan()
         LOG_ERROR("湖南: 没有门户地址 (接入设备未下发, 配置里也没有)");
         return false;
     }
+
+    /**
+     * 把"这次实际用哪个门户"记成只读快照, 供网页界面显示。
+     *
+     * 注意这**不是**写回 login_cfg.portal —— 那会让网页保存时把发现值固化成
+     * 配置文件里的死值 (见 States.h 里 runtime_portal 的注释)。
+     * 页面因此能如实告诉用户"程序在连 175.x, 而你配置里填的是 10.x"。
+     */
+    snprintf(g_prog_status[tl_thread_idx].runtime_portal,
+             sizeof(g_prog_status[tl_thread_idx].runtime_portal), "%s", portal);
+    g_prog_status[tl_thread_idx].runtime_portal_port = portal_port;
+    snprintf(g_prog_status[tl_thread_idx].portal_source,
+             sizeof(g_prog_status[tl_thread_idx].portal_source),
+             "%s", from_device ? "dhcp" : "config");
 
     /**
      * mscgip 同样优先用接入设备下发的。

@@ -7,7 +7,9 @@
      GET  /api/status/online  -> 204 已在线 / 302 需认证 / 503 离线（无 body）
      GET  /api/status/sys     -> {version,uptime_ms,log_level,log_dir,
                                   config_file,program_enabled,restart_pending,
-                                  account_count,thread_count}
+                                  account_count,thread_count,configured,
+                                  config_corrupt,portal_live,portal_live_port,
+                                  portal_source}
      GET  /api/getConfigs     -> {enabled,web_external_acc,log_lv,log_dir,
                                   conn_timeout,op_timeout,web_port,accounts:[...]}
      GET  /api/logs           -> {dir, files:[{name,size,mtime,current}]}
@@ -156,6 +158,64 @@ async function pollStatus() {
   renderStatus();
 }
 
+/* ------------------------- 「实际使用的门户」 ---------------------------- */
+
+/**
+ * 把「程序到底在连哪个门户」画出来。
+ *
+ * 设置页那两栏填的是**回退值**（设备没下发时用的兜底），而用户看到「门户地址
+ * 175.12.104.1」自然会以为那就是程序在连的地址 —— 这两个值可以不一样。
+ * 后端把上一次认证真正采用的值放在 /api/status/sys 里，这里如实并排显示。
+ *
+ * 三种情形分开说，不含糊：
+ *   dhcp   接入设备下发的（正常情况）
+ *   config 设备没下发，退回了配置值
+ *   空     还没判定过：程序刚起来，或者本来就已认证（那时没有 302 可看）
+ *
+ * 已认证时这个值是**上一次**的结果，必须写清楚，不能假装它是当前的 ——
+ * 认证成功后探测返回 204，门户地址这个量在现场根本不存在。
+ */
+function renderLivePortal() {
+  const s = state.sys;
+
+  const text = {
+    dhcp: ['接入设备下发', 'ok'],
+    config: ['设备未下发，回退到配置', 'warn'],
+  };
+
+  let addr = '未知';
+  let note = '尚未认证，接入设备还没告知';
+  let kind = 'unknown';
+
+  if (s && s.portal_live) {
+    addr = s.portal_live + (s.portal_live_port ? ':' + s.portal_live_port : '');
+    const t = text[s.portal_source];
+    note = t ? t[0] : '';
+    kind = t ? t[1] : 'unknown';
+
+    /* 已认证 = 没有 302，这个值是上一次认证时记下的 */
+    if (state.auth && state.auth.status) {
+      note = (note ? note + '，' : '') + '上次认证时采用';
+    }
+  }
+
+  const live = $('#portalLive');
+  if (live) {
+    live.dataset.kind = kind;
+    $('#portalLiveAddr').textContent = addr;
+    $('#portalLiveNote').textContent = note;
+  }
+
+  const abEl = $('#abPortal');
+  if (abEl) {
+    abEl.textContent = addr;
+    $('#abPortalSrc').textContent =
+      s && s.portal_live
+        ? (kind === 'ok' ? '接入设备下发' : kind === 'warn' ? '配置回退' : '—')
+        : '尚未判定';
+  }
+}
+
 function renderStatus() {
   const a = state.auth || {};
   const s = state.sys;
@@ -244,6 +304,8 @@ function renderStatus() {
     set('#siCfg', s.config_file || '—');
     set('#siRestart', s.restart_pending ? '有（点「保存并应用」生效）' : '无');
   }
+
+  renderLivePortal();
 
   /* 「断开连接 / 连接」按钮: 断开中它变成主按钮, 同时禁用「重新认证」
      （那个接口要求当前已认证, 断开状态下必然 403, 不如直接禁用） */

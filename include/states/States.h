@@ -180,6 +180,30 @@ typedef struct
      * 放 auth_cfg 里会被清空。
      */
     char portal_hint[PORTAL_HINT_LEN];
+
+    /**
+     * 上一次认证**实际采用**的门户地址 (见 DialerAuth.c 的 discover_hunan)。
+     *
+     * 为什么不直接把发现到的地址写回 login_cfg.portal:
+     *   /api/getConfigs 回给网页的正是 login_cfg.portal, 而网页保存是**原样写盘**
+     *   (Config.c 的 write_cfg_json)。一旦被运行时值污染, 用户点一次「保存」就会
+     *   把"接入设备当时下发的地址"固化成配置文件里的死值 —— 回退机制当场失效,
+     *   下次接入设备一换, 连退路都没有。所以运行时值必须另开一组字段。
+     *
+     * 语义: portal_source 非空时这两个字段才有意义。它们是**只读快照**, 只给
+     * 网页界面显示"程序到底在连哪"用。配置里的 portal/portal_port 则始终是
+     * 回退值, 由用户编辑。
+     */
+    char runtime_portal[64];
+    uint16_t runtime_portal_port;
+
+    /**
+     * 上面那个门户是哪来的:
+     *   "dhcp"   接入设备在 302 里下发的 (优先)
+     *   "config" 设备没下发, 回退到配置里的值
+     *   ""       还没判定过 (程序刚起来 / 本来就已认证, 没有 302 可看)
+     */
+    char portal_source[8];
 } prog_status_t;
 
 #ifdef _WIN32

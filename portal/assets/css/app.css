@@ -376,6 +376,38 @@ html[data-theme="dark"] .hero { background: var(--surface); }
 .field-row .field { flex: 1; min-width: 150px; }
 .field--narrow { flex: 0 0 110px !important; min-width: 110px !important; }
 
+/* --------------------- 「当前实际使用」只读提示行 ----------------------- */
+/* 设置页的门户输入框填的是**回退值**, 而用户会以为那就是程序在用的地址。
+   这一行把后端给出的真实值并排显示出来, 用状态点区分来源 (下发/回退/未判定)。 */
+.live-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 0 16px;
+  padding: 9px 12px;
+  border-radius: var(--radius-card);
+  background: var(--surface-hover);
+  border: 1px solid var(--stroke);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.live-row__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transform: translateY(-1px);
+}
+.live-row__text { flex: 1; min-width: 0; word-break: break-all; }
+.live-row__text b { color: var(--text); }
+.live-row__nl { color: var(--text-3); }
+
+.live-row[data-kind="ok"] { background: var(--ok-soft); border-color: transparent; }
+.live-row[data-kind="ok"] .live-row__dot { background: var(--ok); }
+.live-row[data-kind="warn"] { background: var(--warn-soft); border-color: transparent; }
+.live-row[data-kind="warn"] .live-row__dot { background: var(--warn); }
+
 .input {
   width: 100%;
   height: 32px;
