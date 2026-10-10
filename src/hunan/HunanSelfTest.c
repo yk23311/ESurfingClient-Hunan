@@ -227,9 +227,9 @@ static int check_portal_parse()
     static const url_case_t urls[] = {
         /* --- 真实样本 (同一台接入设备, 三次不同客户端 IP) --- */
         { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.199.113"
-          "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
+          "&mscgip=218.75.255.245&wlanusermac=aa-bb-cc-dd-ee-ff", "175.12.104.1", 10001 },
         { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.199.113"
-          "&mscgip=218.75.255.245&wlanusermac=cc-28-aa-4b-b6-d5", "175.12.104.1", 10001 },
+          "&mscgip=218.75.255.245&wlanusermac=aa-bb-cc-dd-ee-ff", "175.12.104.1", 10001 },
         { "http://175.12.104.1:10001/index.cgi?wlanuserip=100.67.205.124"
           "&mscgip=218.75.255.245&wlanusermac=e8-b0-c5-18-31-8e", "175.12.104.1", 10001 },
         /* --- 缺省端口 / https / 主机名 --- */
@@ -256,7 +256,7 @@ static int check_portal_parse()
 
     static const query_case_t queries[] = {
         { "http://h/i.cgi?wlanuserip=100.67.199.113&mscgip=218.75.255.245"
-          "&wlanusermac=cc-28-aa-4b-b6-d5", "mscgip", "218.75.255.245" },
+          "&wlanusermac=aa-bb-cc-dd-ee-ff", "mscgip", "218.75.255.245" },
         /* 第一个参数 (紧跟 '?') 也要取得到 */
         { "http://h/i.cgi?wlanuserip=100.67.199.113&mscgip=218.75.255.245",
           "wlanuserip", "100.67.199.113" },
