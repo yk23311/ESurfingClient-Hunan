@@ -451,6 +451,29 @@ int work_auth()
         }
 
         /**
+         * 配置还不足以认证 (账号为空 / 被停用)。
+         *
+         * 本角色没有网页界面, 用户只能改配置文件, 所以这里定期重读一遍等它变好。
+         * **不能直接退出**: 退出会被监管者当成崩溃反复重启, 变成重启风暴;
+         * 也不能就这么往下走 —— 那会拿空用户名去认证。
+         */
+        if (g_cfg_ready == false)
+        {
+            LOG_INFO("【待配置】账号或省份尚未填好, 本进程不会发起认证");
+            LOG_INFO("请编辑 %s 填好账号与省份 (enabled 需要为 true)", get_config_path());
+
+            while (g_cfg_ready == false
+                   && g_need_exit == false && g_stop_requested == 0 && supervisor_gone() == false)
+            {
+                sleep_ms(10000, false);
+                if (load_cfg() == false) shut(1);
+            }
+
+            network_ready = false; // 配好了重新走一次网络检测
+            continue;
+        }
+
+        /**
          * 启动时先等网络进入需要认证的状态 (与单进程模式一致).
          * 等待过程中若允许时段关闭, wait_need_auth 会把控制权交回来
          */

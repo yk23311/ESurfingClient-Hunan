@@ -228,6 +228,26 @@ extern bool g_need_restart;
 
 extern bool g_cfg_loaded;
 
+/**
+ * 配置是否**就绪到可以认证** —— 即 enabled 为真, 且至少有一个账号的
+ * username / password 都非空。
+ *
+ * 为假时程序**只跑网页界面**, 不起认证线程: 首次运行、账号还没填、
+ * 用户在网页上点了"停用"都落在这里。用户不需要手工编辑配置文件 ——
+ * 在网页上填完点「保存并应用」, 这个标志就会翻成真, 主循环随即开始认证。
+ *
+ * 与 g_cfg_loaded 的区别: 那个只是"文件读过了", 这个才是"能拿去认证了"。
+ */
+extern bool g_cfg_ready;
+
+/**
+ * 配置文件存在, 但内容解析不了 (JSON 语法错误 / 被截断)。
+ *
+ * 这时程序改用内置默认值继续跑 (不再挂起或退出), 网页上会提示
+ * "原配置文件无法解析, 保存会覆盖它", 由用户决定是否覆盖。
+ */
+extern bool g_cfg_corrupt;
+
 extern long g_conn_timeout;
 
 extern long g_op_timeout;

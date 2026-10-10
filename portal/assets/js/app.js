@@ -165,8 +165,15 @@ function renderStatus() {
      操作报成异常。 */
   const offline = a.offline === true;
 
+  /* 还没配置好（账号为空 / 被停用）。这时网络探测必然显示"需要认证"，
+     但那是**还没开始认证**，不是故障 —— 所以这个判断要排在网络状态之前，
+     否则第一次打开页面的人只会看到"需要认证"，不知道该怎么办。 */
+  const notConfigured = !!(s && s.configured === false);
+
   // 顶部胶囊
-  if (offline) {
+  if (notConfigured) {
+    setStatusPill('busy', '待配置');
+  } else if (offline) {
     setStatusPill('err', '已断开');
   } else if (state.online === ONLINE.OK) {
     setStatusPill('ok', a.status ? '已认证' : '已在线');
@@ -185,7 +192,10 @@ function renderStatus() {
   bar.setAttribute('stroke-dasharray', C.toFixed(1));
 
   let heroClass = '', stateText = '', hint = '', dash = 0;
-  if (offline) {
+  if (notConfigured) {
+    heroClass = 'is-warn'; stateText = '等待配置'; dash = C * .12;
+    hint = '在「设置」里填手机号、密码并选择省份，然后点「保存并应用」';
+  } else if (offline) {
     heroClass = 'is-err'; stateText = '已断开连接'; dash = 0;
     hint = '会话已登出，程序不会再自动重连';
   } else if (state.online === ONLINE.OK && a.status) {
@@ -211,9 +221,10 @@ function renderStatus() {
 
   // 统计卡
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
-  set('#stAuth', offline ? '已断开' : (a.status ? '已认证' : '未认证'));
-  set('#stAuthSub', offline ? '手动断开，等待「连接」'
-                            : (a.reachable === false ? '认证进程不可达' : '认证进程可达'));
+  set('#stAuth', notConfigured ? '待配置' : (offline ? '已断开' : (a.status ? '已认证' : '未认证')));
+  set('#stAuthSub', notConfigured ? '还没有账号，见「设置」'
+                                 : (offline ? '手动断开，等待「连接」'
+                                            : (a.reachable === false ? '认证进程不可达' : '认证进程可达')));
   set('#stOnline', state.online === ONLINE.OK ? '通' :
                    state.online === ONLINE.NEED_AUTH ? '待认证' :
                    state.online === ONLINE.OFFLINE ? '断' : '未知');
@@ -244,7 +255,10 @@ function renderStatus() {
     btnConn.disabled = a.reachable === false;
   }
   const btnReauth = $('#btnReauth');
-  if (btnReauth) btnReauth.disabled = offline;
+  if (btnReauth) btnReauth.disabled = offline || notConfigured;
+
+  /* 设置页的引导条也跟着状态走（配置刚被应用时它要自己消失） */
+  renderSettingsBanner();
 }
 
 /* ------------------------------ 配置读写 -------------------------------- */
@@ -267,6 +281,31 @@ function checkConfigRoundTrip(cfg) {
   const btnApply = $('#btnApply');
 
   if (state.provinceFromApi === null) {
+    btnSave.disabled = true;
+    btnApply.disabled = true;
+    renderSettingsBanner();
+    return;
+  }
+
+  btnSave.disabled = false;
+  btnApply.disabled = false;
+  renderSettingsBanner();
+}
+
+/**
+ * 设置页顶部的提示条。按优先级只显示一条：
+ *
+ *  1. 后端太旧（不返回 province）—— 保存会把省份抹掉，直接禁用保存
+ *  2. 配置文件无法解析 —— 保存会覆盖它，必须先告诉用户
+ *  3. 还没配置好 —— 首次运行的引导
+ *
+ * 第 1 条由 checkConfigRoundTrip 关掉按钮，这里只负责画出来。
+ */
+function renderSettingsBanner() {
+  const banner = $('#settingsBanner');
+  if (!banner) return;
+
+  if (state.provinceFromApi === null) {
     banner.innerHTML =
       '<div class="banner banner--err">' +
       '<div class="banner__icon">⚠️</div><div>' +
@@ -275,14 +314,38 @@ function checkConfigRoundTrip(cfg) {
       '而保存是把页面内容原样写盘 —— 在这里保存会把省份配置抹掉，' +
       '重启后静默退回广东模式。请先更新到带省份字段的版本。</div>' +
       '</div></div>';
-    btnSave.disabled = true;
-    btnApply.disabled = true;
+    return;
+  }
+
+  const sys = state.sys;
+
+  if (sys && sys.config_corrupt) {
+    banner.innerHTML =
+      '<div class="banner banner--err">' +
+      '<div class="banner__icon">⚠️</div><div>' +
+      '<div class="banner__title">原来的配置文件无法解析</div>' +
+      '<div class="banner__desc">程序已经改用默认值在跑。你在这里点「保存」，' +
+      '会用页面上的内容**覆盖**那个文件 —— 如果原文件里有想保留的东西，' +
+      '先备份再保存。</div>' +
+      '</div></div>';
+    return;
+  }
+
+  if (sys && sys.configured === false) {
+    banner.innerHTML =
+      '<div class="banner banner--accent">' +
+      '<div class="banner__icon">①</div><div>' +
+      '<div class="banner__title">还差一步就能上网</div>' +
+      '<div class="banner__desc">' +
+      '<b>1.</b> 填手机号与密码；<b>2.</b> 选对省份（湖南 / 广东）；' +
+      '<b>3.</b> 点下面的「保存并应用」。<br>' +
+      '不需要手工编辑任何配置文件 —— 填完这一页就行了。' +
+      (sys.program_enabled === false ? '<br>⚠️ 当前是「已停用」状态，请把上面的开关打开。' : '') +
+      '</div></div></div>';
     return;
   }
 
   banner.innerHTML = '';
-  btnSave.disabled = false;
-  btnApply.disabled = false;
 }
 
 function fillForm(cfg) {
@@ -576,6 +639,18 @@ async function boot() {
   bind();
   await pollStatus();
   await loadConfig();
+
+  /**
+   * 还没配置好 —— 首次运行就是这个状态。
+   *
+   * 直接把用户送到「设置」页：这是唯一需要他动手的地方，让他在仪表盘上
+   * 看着一个"需要认证"的红灯猜要干什么，是最没必要的折磨。
+   */
+  if (state.sys && state.sys.configured === false) {
+    showPage('settings');
+    toast('欢迎使用：请填写手机号与密码，选择省份，然后点「保存并应用」', 'ok', 8000);
+  }
+
   state.pollTimer = setInterval(pollStatus, 3000);
 }
 

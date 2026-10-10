@@ -20,8 +20,18 @@ static const char config_file[] = "/etc/config/esurfingclient";
 static char config_file[PATH_MAX + 1 + sizeof(DIALER_CONFIG_FILE)];
 #endif
 
+/**
+ * 首次运行时生成的默认配置。
+ *
+ * 两处刻意的选择:
+ *  · enabled = true —— 用户填完账号就不必再去管"启用"开关;
+ *    账号为空时程序本来就不会去认证, 所以这里是安全的
+ *  · province = hunan —— 本分支是湖南适配版, 而下面的 portal 一直填的就是湖南门户;
+ *    以前这里写 guangdong (与 portal 自相矛盾), 用户很容易漏改, 然后
+ *    认证失败却报"提取门户配置失败", 极难定位
+ */
 static const char s_default_cfg[] = "{\n"
-                                    "   \"enabled\": false,\n"
+                                    "   \"enabled\": true,\n"
                                     "   \"web_external_acc\": false,\n"
                                     "   \"log_lv\": 4,\n"
                                     "   \"log_dir\": \"./\",\n"
@@ -34,7 +44,7 @@ static const char s_default_cfg[] = "{\n"
                                     "           \"password\": \"\",\n"
                                     "           \"channel\": 3,\n"
                                     "           \"mark\": \"\",\n"
-                                    "           \"province\": \"guangdong\",\n"
+                                    "           \"province\": \"hunan\",\n"
                                     "           \"portal\": \"175.12.104.1\",\n"
                                     "           \"portal_port\": 10001,\n"
                                     "           \"mscgip\": \"\",\n"
@@ -156,9 +166,31 @@ const char* get_config_path(void)
     return config_file;
 }
 
+/**
+ * @brief 给 g_prog_status[0] 填一份"可显示"的默认账号配置
+ *
+ * 没有可用账号时, 网页表单也得有东西可显示 (通道 / 省份 / 门户), 所以尽量把
+ * 用户已经写在文件里的那几个字段读出来; 读不到 (account 为 NULL, 或文件根本
+ * 解析不了) 就用内置默认值。
+ *
+ * 只填"能让表单显示正确"的字段, 不填 username / password —— 那两个为空正是
+ * 程序判定"还没配置好"的依据。
+ */
+static void fill_default_login_cfg(const cJSON* account)
+{
+    login_cfg_t* lc = &g_prog_status[0].login_cfg;
+
+    lc->chn = DEFAULT_CHANNEL;
+    apply_channel_ua(lc, 1);
+    apply_province_json(lc, account, 1);
+    lc->idx = 1;
+}
+
 bool load_cfg()
 {
     g_cfg_loaded = false;
+    g_cfg_ready = false;
+    g_cfg_corrupt = false;
     /**
      * 桌面分支直接写 g_prog_status[0], 这里保证至少有一格可用
      * (OpenWrt 分支后面会按配置数重新分配)
@@ -186,41 +218,80 @@ bool load_cfg()
 
 #endif
 
+    /**
+     * 配置文件缺失 / 为空 / 语法坏掉时**不再退出或挂起**, 改用内置默认值继续跑起来:
+     * 网页界面照常启动, 用户在网页上填完账号即可使用, 不需要先去手工编辑这个文件。
+     * 这正是"第一次双击就能配好"的关键。
+     */
     FILE* cfg_file = fopen(config_file, "r");
+    char* cfg_data = NULL;
+
     if (!cfg_file || fgetc(cfg_file) == EOF)
     {
-        LOG_ERROR("无法打开配置文件或配置文件为空: %s", config_file);
-        LOG_INFO("创建新的默认配置文件");
+        if (cfg_file != NULL) fclose(cfg_file);
+
+        LOG_WARN("配置文件不存在或为空: %s", config_file);
+        LOG_INFO("已生成默认配置文件; 接下来请在网页界面上填写账号与省份 (无需手工编辑该文件)");
+
         FILE* new_cfg = fopen(config_file, "w");
-        if (!new_cfg)
+        if (new_cfg == NULL)
         {
-            LOG_FATAL("无法生成文件: %s, 请检查权限后重启", config_file);
-            cfg_halt();
-            return false;
+            /* 连默认文件都写不出来 (目录只读?)。仍然继续 —— 网页照样能起来,
+               只是用户点"保存"时会失败并看到提示 */
+            LOG_ERROR("无法生成默认配置文件: %s (目录是否只读?), 本次运行使用内置默认值", config_file);
         }
-        fprintf(new_cfg, "%s", s_default_cfg);
-        fclose(new_cfg);
-        LOG_INFO("创建完成, 请在 %s 填写账号数据, 然后重启", config_file);
+        else
+        {
+            fprintf(new_cfg, "%s", s_default_cfg);
+            fclose(new_cfg);
+        }
+
+        cfg_data = malloc(sizeof(s_default_cfg));
+        if (cfg_data != NULL) snprintf(cfg_data, sizeof(s_default_cfg), "%s", s_default_cfg);
+    }
+    else
+    {
+        fseek(cfg_file, 0, SEEK_END);
+        const long len = ftell(cfg_file);
+        fseek(cfg_file, 0, SEEK_SET);
+
+        cfg_data = malloc((size_t)len + 1);
+        if (cfg_data != NULL)
+        {
+            const size_t got = fread(cfg_data, 1, (size_t)len, cfg_file);
+            cfg_data[got] = '\0';
+        }
+        fclose(cfg_file);
+    }
+
+    if (cfg_data == NULL)
+    {
+        LOG_FATAL("读取配置时分配内存失败");
         cfg_halt();
         return false;
     }
 
-    fseek(cfg_file, 0, SEEK_END);
-    const long len = ftell(cfg_file);
-    fseek(cfg_file, 0, SEEK_SET);
-
-    char* cfg_data = malloc(len + 1);
-    fread(cfg_data, 1, len, cfg_file);
-    cfg_data[len] = '\0';
-    fclose(cfg_file);
-
     cJSON* cfg_json = cJSON_Parse(cfg_data);
     free(cfg_data);
+
     if (!cfg_json)
     {
-        LOG_FATAL("JSON 解析失败, 请检查后重启");
-        cfg_halt();
-        return false;
+        /**
+         * 文件在, 但内容不是合法 JSON。**不覆盖**用户的文件, 只标记出来:
+         * 内存里改用默认值继续跑, 网页上会提示"保存会覆盖它", 由用户决定。
+         * 这样既不会卡住, 也不会悄悄吃掉别人手工写的配置。
+         */
+        LOG_ERROR("配置文件无法解析 (JSON 语法错误?): %s", config_file);
+        LOG_WARN("本次运行改用内置默认值; 在网页界面上保存配置会覆盖该文件");
+        g_cfg_corrupt = true;
+
+        cfg_json = cJSON_Parse(s_default_cfg);
+        if (!cfg_json)
+        {
+            LOG_FATAL("内置默认配置解析失败 (程序内部错误)");
+            cfg_halt();
+            return false;
+        }
     }
 
     /**
@@ -250,19 +321,18 @@ bool load_cfg()
     const cJSON* enabled = cJSON_GetObjectItem(cfg_json, "enabled");
     if (enabled == NULL)
     {
-        LOG_WARN("enabled 参数不存在, 请填写后重启程序");
+        LOG_WARN("enabled 参数不存在, 按未启用处理 (可在网页界面上开启)");
         g_prog_enabled = false;
-        cfg_halt();
-        return false;
     }
-    if (cJSON_IsFalse(enabled))
+    else if (cJSON_IsFalse(enabled))
     {
-        LOG_WARN("配置文件中禁用了程序启动, 请开启后重启程序");
+        LOG_INFO("配置里已停用认证 (可在网页界面上重新启用)");
         g_prog_enabled = false;
-        cfg_halt();
-        return false;
     }
-    g_prog_enabled = true;
+    else
+    {
+        g_prog_enabled = true;
+    }
 
     const cJSON* log_lv = cJSON_GetObjectItem(cfg_json, "log_lv");
     if (log_lv)
@@ -393,6 +463,9 @@ bool load_cfg()
     const uint8_t cnt = cJSON_GetArraySize(accounts);
 
     int8_t valid_cnt = 0;
+
+    /* 没有可用账号时, 是否已经用文件里的字段把默认值填过一遍 */
+    bool defaults_filled = false;
 
 #ifdef __OPENWRT__
     if (g_prog_account != 0)
@@ -591,7 +664,28 @@ bool load_cfg()
         break;
     }
 
+    if (valid_cnt == 0)
+    {
+        /**
+         * 一个可用账号都没有 (首次运行就是这个情况: username / password 都是空的)。
+         * 以前这里是致命错误, 于是"第一次双击"永远进不到网页界面。
+         * 现在改成: 用第一份账号里已经填过的省份 / 门户把表单撑起来, 继续往下走,
+         * 由网页界面负责让用户把账号填完。
+         */
+        LOG_WARN("配置里还没有填账号 (username / password 为空)");
+
+        fill_default_login_cfg(cJSON_GetArrayItem(accounts, 0));
+        defaults_filled = true;
+    }
+
 #endif
+
+    /**
+     * 必须在 `--account` 挑选**之前**记下来: 下面那段会把 valid_cnt 改成 1,
+     * 而那个 1 是"挑中了一份配置"的意思, 不代表这份配置里有真账号。
+     * 顺序反了的话, "--account 1 + 空账号" 会被当成已配置, 然后拿空用户名去认证。
+     */
+    const bool has_usable_account = (valid_cnt > 0);
 
     cJSON_Delete(cfg_json);
 
@@ -638,16 +732,41 @@ bool load_cfg()
         LOG_INFO("仅加载配置 %" PRIu8 ", 标记值: 0x%x", g_prog_account, g_prog_status[0].login_cfg.mark);
     }
 
-    if (valid_cnt == 0)
+    /**
+     * 一个可用账号都没有时**不再退出或挂起**。
+     *
+     * 以前这里直接返回失败, 于是"第一次双击"永远到不了网页界面 ——
+     * 而网页界面才是唯一能让用户把账号填进去的地方 (用户不该被要求手工编辑 JSON)。
+     *
+     * 现在: 保证 g_prog_status[0] 有一份可显示的默认值, 程序继续跑,
+     * 只是 g_cfg_ready 为假 → 主循环只开网页、不起认证线程。
+     * 用户在网页上填完并「保存并应用」后, 这个标志就会翻成真。
+     */
+    if (!has_usable_account)
     {
-        LOG_FATAL("无可用配置, 请检查后重启程序");
-        cfg_halt();
-        return false;
+        if (!defaults_filled)
+        {
+            /* OpenWrt 分支没有上面的兜底, 这里补一次 (拿不到账号就纯用内置默认) */
+            fill_default_login_cfg(NULL);
+        }
+
+        LOG_WARN("还没有可用账号, 程序将只提供网页界面, 请在网页上填写账号与省份");
+        valid_cnt = 1;
     }
 
     g_prog_cnt = valid_cnt;
 
     g_cfg_loaded = true;
+
+    /* 只有"已启用 + 有可用账号"才允许进入认证流程 */
+    g_cfg_ready = (has_usable_account && g_prog_enabled);
+
+    if (!g_cfg_ready)
+    {
+        LOG_INFO("当前处于【待配置】状态 (enabled=%s, 账号=%s): 只启动网页界面, 不发起认证",
+                 g_prog_enabled ? "true" : "false",
+                 has_usable_account ? "已填" : "未填");
+    }
 
     return true;
 }

@@ -288,6 +288,35 @@ static int work_web()
 
 #endif
 
+/**
+ * @brief 让所有认证线程退出, 并等它们真的结束
+ *
+ * is_need_reauth 会让 run() 立刻返回、主循环随之跳出; sleep_ms(can_stop=true)
+ * 也会被它唤醒, 所以线程能很快收尾 (收尾里会跑 clean(), 也就是登出)。
+ *
+ * 必须 join: 线程还在跑的时候既不能重载配置, 也不能安全地重建线程 ——
+ * 而且 sim_thread 的资源要在这里回收。
+ */
+static void stop_all_dialer_threads()
+{
+    for (uint8_t i = 0; i < g_prog_cnt; i++)
+    {
+        g_prog_status[i].runtime_status.is_running = true;
+        g_prog_status[i].runtime_status.is_need_reauth = true;
+    }
+
+    for (uint8_t i = 0; i < g_prog_cnt; i++)
+    {
+        if (g_prog_status[i].thread != NULL)
+        {
+            int result_code = 0;
+            sim_thread_join(g_prog_status[i].thread, &result_code);
+            g_prog_status[i].thread = NULL;
+            LOG_INFO("认证线程 %" PRIu8 " 已停止 (退出码 %d)", i, result_code);
+        }
+    }
+}
+
 void work()
 {
     /**
@@ -323,12 +352,13 @@ void work()
     print_banner();
 
     /**
-     * 先加载配置再起 Web 服务
+     * 先加载配置, 再起 Web 服务 —— 顺序不能反:
+     * 监听端口与是否允许外部访问 (配置里的 web_port / web_external_acc)
+     * 要在绑端口之前就位, 反过来就只能按默认端口开出去了。
      *
-     * 监听端口与是否允许外部访问 (配置里的 web_port / web_external_acc) 要在
-     * 绑端口之前就位, 顺序反过来就只能按默认端口开出去了。
-     * 顺带解决了"配置没读好却已经对外提供网页"这件事: 配置有问题时 cfg_halt
-     * 会挂住等用户改配置, 那种状态下网页上的账号信息本来就是空的
+     * 注意 load_cfg() 现在**不会**因为"没有配置文件 / 账号为空 / 被停用"而失败:
+     * 那几种情况都改用内置默认值继续跑, 由网页界面让用户把它填好。
+     * 只有真正致命的 (内存不足、连内置模板都解析不了) 才返回 false。
      */
     if (load_cfg() == false) shut(1); // 加载配置文件
 
@@ -339,56 +369,118 @@ void work()
     time_control_sync(); // 冷启动时先按当前时间同步各账号的时间控制状态
     if (time_control_init() == false) shut(1); // 启动时间控制定时线程
 
-    logout_previous_session(); // 前台模式的强杀登出流程
-
     /**
-     * 检测网络状态, 进入需要认证的状态后才继续
+     * 认证阶段可以**反复进入 / 退出**: 用户可能在网页上停用认证, 或把账号清空。
+     * 每次回到阶段一时网页界面都保持在线, 所以永远有地方把它改回来。
      */
-    if (wait_need_auth() == WAIT_RETRY_EXHAUSTED) shut(1);
-
-    // 等待期间收到退出请求
-    if (g_stop_requested) shut(0);
-
-    /**
-     * 根据配置数创建相应数量的线程
-     */
-    LOG_DEBUG("开始创建认证线程");
-    for (uint8_t i = 0; i < g_prog_cnt; i++)
+    for (;;)
     {
-        if (g_prog_status[i].runtime_status.is_time_disabled)
+        /**
+         * ================= 阶段一: 等配置就绪 =================
+         *
+         * g_cfg_ready 为假 = 还没启用, 或账号密码还没填。这时**不发任何网络请求**,
+         * 但网页界面已经起来了 —— 用户打开浏览器就能填, 不需要手工编辑 JSON。
+         *
+         * 网页上点「保存并应用」会把 g_cfg_loaded 置为 false, 这里重新加载;
+         * 加载后配置齐了 (g_cfg_ready 为真) 就进入阶段二。
+         */
+        bool wait_notified = false;
+
+        while (g_cfg_ready == false && g_stop_requested == 0)
         {
-            LOG_INFO("配置 %" PRIu8 " 当前不在允许时段，暂不启动认证线程", g_prog_status[i].login_cfg.idx);
-            continue;
-        }
-        g_prog_status[i].thread = sim_thread_create(dialer_app, (void*)(intptr_t)i);
-        uint8_t retry_ct = 1;
-        while (g_prog_status[i].thread == NULL)
-        {
-            if (retry_ct > 5)
+            if (g_cfg_loaded == false)
             {
-                LOG_FATAL("超过重试次数, 退出程序");
-                shut(1);
+                LOG_INFO("收到网页提交的配置, 重新加载");
+                if (load_cfg() == false) shut(1);
+                wait_notified = false;
+                continue;
             }
-            LOG_ERROR("认证线程 %" PRIu8 " 创建失败, 重试中, 重试次数: %" PRIu8 ", 最多 5 次", i, retry_ct);
-            g_prog_status[i].thread = sim_thread_create(dialer_app, (void*)(intptr_t)i);
-            retry_ct++;
-        }
-    }
 
-    /**
-     * 线程守护
-     * 登录时间检测
-     */
-    sleep_ms(5000, false);
-    LOG_INFO("线程守护开启");
-    uint64_t check_time = 0;
-    while (g_thread_keep_alive && g_stop_requested == 0)
-    {
-        if (check_time > 299999)
-        {
-            check_time = 0;
-            LOG_INFO("线程守护持续运行中");
+            if (wait_notified == false)
+            {
+                LOG_INFO("【待配置】账号或省份尚未填好, 本程序只提供网页界面, 不会发起认证");
+                LOG_INFO("请在浏览器打开 http://127.0.0.1:%" PRIu16 " 填写账号密码与省份, 然后点「保存并应用」",
+                         g_web_port);
+                wait_notified = true;
+            }
+
+            sleep_ms(500, false);
         }
+
+        if (g_stop_requested) break; // 等待期间收到退出请求
+
+        LOG_INFO("配置已就绪, 开始认证流程");
+
+        /**
+         * ================= 阶段二: 认证 =================
+         */
+        logout_previous_session(); // 前台模式的强杀登出流程
+
+        /**
+         * 检测网络状态, 进入需要认证的状态后才继续
+         */
+        if (wait_need_auth() == WAIT_RETRY_EXHAUSTED) shut(1);
+
+        if (g_stop_requested) break; // 等待期间收到退出请求
+
+        /**
+         * 根据配置数创建相应数量的线程
+         */
+        LOG_DEBUG("开始创建认证线程");
+        for (uint8_t i = 0; i < g_prog_cnt; i++)
+        {
+            if (g_prog_status[i].runtime_status.is_time_disabled)
+            {
+                LOG_INFO("配置 %" PRIu8 " 当前不在允许时段，暂不启动认证线程", g_prog_status[i].login_cfg.idx);
+                continue;
+            }
+            g_prog_status[i].thread = sim_thread_create(dialer_app, (void*)(intptr_t)i);
+            uint8_t retry_ct = 1;
+            while (g_prog_status[i].thread == NULL)
+            {
+                if (retry_ct > 5)
+                {
+                    LOG_FATAL("超过重试次数, 退出程序");
+                    shut(1);
+                }
+                LOG_ERROR("认证线程 %" PRIu8 " 创建失败, 重试中, 重试次数: %" PRIu8 ", 最多 5 次", i, retry_ct);
+                g_prog_status[i].thread = sim_thread_create(dialer_app, (void*)(intptr_t)i);
+                retry_ct++;
+            }
+        }
+
+        /**
+         * 线程守护
+         * 登录时间检测
+         */
+        sleep_ms(5000, false);
+        LOG_INFO("线程守护开启");
+        uint64_t check_time = 0;
+
+        /**
+         * 循环条件里的 g_cfg_ready: 用户在网页上停用 / 清空账号时, 它会被置为假,
+         * 守护循环随即退出, 由下面统一把线程停干净并回到阶段一。
+         */
+        while (g_thread_keep_alive && g_stop_requested == 0 && g_cfg_ready)
+        {
+            /**
+             * 配置被改过 (网页「保存并应用」会把 g_cfg_loaded 置假):
+             * 先让所有认证线程退出, 再重新加载。加载后由外层判断
+             * "仍然就绪" → 重新走一遍认证; "已停用/已清空" → 回阶段一等。
+             */
+            if (g_cfg_loaded == false)
+            {
+                LOG_INFO("检测到配置变更, 正在重新加载");
+                stop_all_dialer_threads();
+                if (load_cfg() == false) shut(1);
+                break;
+            }
+
+            if (check_time > 299999)
+            {
+                check_time = 0;
+                LOG_INFO("线程守护持续运行中");
+            }
         for (uint8_t i = 0; i < g_prog_cnt; i++)
         {
             /**
@@ -476,8 +568,21 @@ void work()
         }
         sleep_ms(10, false);
         check_time += 10;
+        }
+
+        LOG_INFO("线程守护已关闭");
+
+        /**
+         * 退出守护循环的两种原因:
+         *   · g_stop_requested / g_thread_keep_alive 为假 → 程序要关了, 跳出阶段循环
+         *   · g_cfg_ready 为假            → 用户在网页上停用或清空了账号,
+         *                                    把线程停干净后回到阶段一继续等
+         */
+        if (g_stop_requested || g_thread_keep_alive == false) break;
+
+        stop_all_dialer_threads();
+        LOG_INFO("配置已停用或账号已清空, 认证线程已全部停止, 回到【待配置】状态, 网页界面继续提供服务");
     }
-    LOG_INFO("线程守护已关闭");
 
     // 收到退出请求: 走正常的关闭流程 (停子线程与 Web 服务、收尾日志、退出)
     if (g_stop_requested) shut(0);

@@ -270,8 +270,29 @@ struct mg_connection* mg_http_listen(struct mg_mgr* mgr, const char* url,
         return NULL;
     }
 
+    /**
+     * 端口复用选项在两个平台上的**语义是相反的**, 不能都写 SO_REUSEADDR:
+     *
+     *   · Linux: SO_REUSEADDR 只是让 bind 不被 TIME_WAIT 的残留连接挡住, 是服务端
+     *     该有的行为 —— 所以用它。
+     *   · Windows: SO_REUSEADDR 的意思是"允许别的进程再 bind 同一个端口", 而且
+     *     后绑的那个会把新连接抢走。也就是说本机任意一个进程都能顶着 8888 起一个
+     *     冒牌网页界面, 用户完全看不出来。Windows 上该用的是 SO_EXCLUSIVEADDRUSE:
+     *     独占端口, 第二个实例老实报"端口被占用"。
+     *
+     * (这个坑是实测踩出来的: 隔离目录里的第二个实例明明该绑不上 8888, 却绑上了。)
+     */
+#ifdef _WIN32
+    int one = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&one, sizeof(one)) != 0)
+    {
+        /* 极少数旧系统不认识这个选项; 失败也不能因此起不来, 只是少了那层保护 */
+        mini_log(MG_LL_DEBUG, "[minihttp] SO_EXCLUSIVEADDRUSE 设置失败: %d", sock_errno);
+    }
+#else
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
+#endif
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));

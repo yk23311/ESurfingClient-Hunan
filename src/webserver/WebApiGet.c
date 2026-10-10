@@ -185,6 +185,16 @@ bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm)
         cJSON_AddStringToObject(info, "log_dir", safe_str(get_logger_dir()));
         cJSON_AddStringToObject(info, "config_file", safe_str(get_config_file_path()));
         cJSON_AddBoolToObject(info, "program_enabled", g_prog_enabled);
+
+        /**
+         * 配置是否已就绪到可以认证。为假时程序只提供网页界面 (首次运行、
+         * 账号还没填、或被用户停用) —— 前端据此直接把用户引导到「设置」页。
+         */
+        cJSON_AddBoolToObject(info, "configured", g_cfg_ready);
+
+        /* 配置文件存在但解析不了: 此时保存会覆盖原文件, 前端要先提示用户 */
+        cJSON_AddBoolToObject(info, "config_corrupt", g_cfg_corrupt);
+
         cJSON_AddBoolToObject(info, "restart_pending", g_need_restart);
         cJSON_AddNumberToObject(info, "account_count", g_prog_cnt);
         cJSON_AddNumberToObject(info, "thread_count", g_prog_cnt);

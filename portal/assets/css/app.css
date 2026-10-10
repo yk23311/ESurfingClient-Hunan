@@ -534,6 +534,9 @@ html[data-theme="dark"] .btn { background: rgba(255,255,255,.08); }
 .banner--warn { border-color: var(--warn-soft); background: var(--warn-soft); }
 .banner--err  { border-color: var(--err-soft);  background: var(--err-soft); }
 .banner--ok   { border-color: var(--ok-soft);   background: var(--ok-soft); }
+/* 首次配置引导：主色描边而不是错误色 —— 这只是一个待办步骤，不是故障 */
+.banner--accent { border-color: var(--accent); background: var(--accent-soft); }
+.banner--accent .banner__icon { color: var(--accent); font-weight: 700; }
 .banner__title { font-weight: 600; margin-bottom: 2px; }
 .banner__desc { color: var(--text-2); font-size: 12.5px; }
 

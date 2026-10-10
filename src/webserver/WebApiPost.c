@@ -147,6 +147,13 @@ bool handle_api_post(struct mg_connection* c, struct mg_http_message* hm)
                 }
                 else
                 {
+                    /**
+                     * 这里**只要求"程序在运行"**, 不再要求"当前已认证"。
+                     *
+                     * 首次配置时认证线程根本还不存在 (账号还是空的), 旧代码在那种
+                     * 情况下回 403 —— 于是用户第一次填的账号永远应用不进去,
+                     * 而这恰恰是"双击就能在网页上配好"最关键的一步。
+                     */
                     bool is_authed = false;
                     const bool reachable = query_is_authed(&is_authed);
 
@@ -155,11 +162,6 @@ bool handle_api_post(struct mg_connection* c, struct mg_http_message* hm)
                         LOG_WARN("收到 Web 应用配置文件请求, 但认证进程不可达");
                         mg_http_reply(c, 503, "", "");
                     }
-                    else if (is_authed == false)
-                    {
-                        LOG_WARN("收到 Web 应用配置文件请求, 但没有线程在认证, 拒绝操作");
-                        mg_http_reply(c, 403, "", "");
-                    }
                     else if (request_apply_config() == false)
                     {
                         LOG_WARN("收到 Web 应用配置文件请求, 但下发到认证进程失败");
@@ -167,7 +169,8 @@ bool handle_api_post(struct mg_connection* c, struct mg_http_message* hm)
                     }
                     else
                     {
-                        LOG_INFO("收到 Web 应用配置文件请求, 程序将重新加载配置文件并进行认证");
+                        LOG_INFO("收到 Web 应用配置文件请求, 程序将重新加载配置文件%s",
+                                 is_authed ? "并进行认证" : " (当前尚未认证, 属于首次配置)");
                         mg_http_reply(c, 204, "", "");
                     }
                 }
