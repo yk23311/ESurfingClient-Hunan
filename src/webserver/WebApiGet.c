@@ -266,6 +266,23 @@ bool handle_api_get(struct mg_connection* c, struct mg_http_message* hm)
             }
         }
 
+        /**
+         * 手动认证请求的诊断可见性。
+         *
+         * 这个请求要跨"网页线程置标志 → 认证线程消费"两个线程和一次线程退出,
+         * 中间任何一个环节把它吃掉, 用户看到的就是"点了没反应"。把它暴露出来,
+         * 出问题时不必靠猜 (实测踩过一次)。
+         */
+        cJSON_AddBoolToObject(info, "force_auth_pending",
+                              g_prog_status != NULL && g_prog_cnt > 0
+                                  ? g_prog_status[0].runtime_status.is_manual_auth_pending : false);
+        cJSON_AddBoolToObject(info, "force_auth_flag",
+                              g_prog_status != NULL && g_prog_cnt > 0
+                                  ? g_prog_status[0].runtime_status.is_manual_auth_force : false);
+        cJSON_AddBoolToObject(info, "manual_offline",
+                              g_prog_status != NULL && g_prog_cnt > 0
+                                  ? g_prog_status[0].runtime_status.is_manual_offline : false);
+
         char* info_str = cJSON_Print(info);
         mg_http_reply(c, 200, HEADER_JSON, "%s", info_str);
         free(info_str);

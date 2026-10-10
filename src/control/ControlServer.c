@@ -280,6 +280,28 @@ static void ctl_dispatch(const char* request, char* reply, const size_t reply_le
             ctl_reply_result(reply, reply_len, true, NULL);
         }
     }
+    else if (strcmp(cmd, "force_auth") == 0)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0)
+        {
+            ctl_reply_result(reply, reply_len, false, "config not loaded");
+        }
+        else
+        {
+            /**
+             * 与 disconnect 一样只置标志: 真正的认证由认证线程去做。
+             *
+             * 顺序要紧 —— 先置 force 再置 pending, 让线程守护看到 pending 时
+             * force 一定已经可见 (两个都是 bool 写)。is_need_reauth 让 run()
+             * 立刻返回, 于是"没有会话"的那条路能被重新走一遍。
+             */
+            LOG_INFO("控制通道收到强制认证请求");
+            g_prog_status[0].runtime_status.is_manual_auth_force = true;
+            g_prog_status[0].runtime_status.is_manual_auth_pending = true;
+            g_prog_status[0].runtime_status.is_need_reauth = true;
+            ctl_reply_result(reply, reply_len, true, NULL);
+        }
+    }
     else if (strcmp(cmd, "shutdown") == 0)
     {
         /**

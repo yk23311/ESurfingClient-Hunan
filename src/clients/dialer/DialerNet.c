@@ -250,6 +250,31 @@ WaitResult wait_need_auth()
             }
         }
 
+        /**
+         * 用户点了「重新认证」: 不看网络探测结果, 直接交回主循环走认证流程。
+         *
+         * 排在 check_network_status 之前是**必须**的 —— 已在线时探测返回 STATUS_OK,
+         * 循环会一直 sleep 下去, 认证流程永远进不去 (这正是"点了没反应"的原因)。
+         *
+         * 下标必须写死 0, **不能**用 tl_thread_idx: 本函数跑在主线程上, 而
+         * tl_thread_idx 只在认证线程里被赋值, 主线程里它是 -1 ——
+         * g_prog_status[-1] 是越界读, 读到的是堆上的垃圾 (实测 init 读成 224)。
+         * 同一个函数里的时间窗口判断就是这么写的, 这里跟它保持一致。
+         *
+         * is_initialized 为假 = 还没进过认证流程, 才是"没有会话"的那种情况;
+         * 已经有会话时不必打断, 认证流程自己会处理重认证。
+         */
+        if (g_prog_status[0].runtime_status.is_manual_auth_force
+            && g_prog_status[0].runtime_status.is_initialized == false)
+        {
+            LOG_INFO("收到手动认证请求: 跳过网络等待, 直接发起认证");
+
+            /* 用掉就清: 线程守护那一路本来就有 5 秒节流, 这里再给一个兜底,
+               免得"强制标志还在、认证却没起来"时变成每秒一次的忙循环 */
+            g_prog_status[0].runtime_status.is_manual_auth_force = false;
+            return WAIT_READY;
+        }
+
         /*
          * 必须用 connect_only = false:
          * STATUS_NEED_AUTH 是靠 portal 劫持产生的 HTTP 302 重定向识别出来的,

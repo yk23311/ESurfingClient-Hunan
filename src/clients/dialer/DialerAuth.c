@@ -270,6 +270,19 @@ AuthStatus auth()
 {
     LOG_DEBUG("auth 函数入口检查, 使用配置: %" PRIu8 ", 下标: %" PRId8, g_prog_status[tl_thread_idx].login_cfg.idx, tl_thread_idx);
 
+    /**
+     * 手动认证请求到这里就算交付了: 门户即将被解析出来, 用户想看到的就是它。
+     *
+     * 放在函数入口是为了"一次请求只消费一次": 放 wait_need_auth() 里不行 ——
+     * 那个函数每轮循环都会重新判定; 放 discover_hunan() 里也不行 —— 那只覆盖
+     * 湖南, 广东分支的请求会一直留着。
+     *
+     * 同时清掉两个标志: force 让后续轮次回到正常的 302 判定, pending 让线程守护
+     * 确认"这次请求已经交付", 不再重复拉起线程。
+     */
+    g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force = false;
+    g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_pending = false;
+
     /* 端点与身份: 湖南查配置+网卡, 广东从门户页发现 */
     const bool province = g_prog_status[tl_thread_idx].login_cfg.province;
     LOG_INFO("省份模式: %s", (province == PROVINCE_HUNAN) ? "湖南" : "广东");

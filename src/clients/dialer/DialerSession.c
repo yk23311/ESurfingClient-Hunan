@@ -105,6 +105,14 @@ void clean()
      */
     const bool manual_offline = g_prog_status[tl_thread_idx].runtime_status.is_manual_offline;
 
+    /**
+     * 手动认证请求同理: 它由**网页线程**置上、由**认证线程**消费, 而两者之间隔着
+     * 一次线程退出 —— 就被这里的 memset 抹掉的话, 用户点了没反应。
+     * 用掉的时机见 DialerClient.c 的线程守护 (一次请求只放行一次尝试)。
+     */
+    const bool manual_auth_pending = g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_pending;
+    const bool manual_auth_force = g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force;
+
     if (g_prog_status[tl_thread_idx].runtime_status.is_initialized == true) // 如果已经初始化会话, 则进入
     {
         if (g_prog_status[tl_thread_idx].runtime_status.is_authed == true) // 如果已经认证, 则进入
@@ -120,6 +128,8 @@ void clean()
     memset(&g_prog_status[tl_thread_idx].runtime_status, 0, sizeof(runtime_status_t)); // 清除 runtime_status 的内容, 并置零
     g_prog_status[tl_thread_idx].runtime_status.is_time_disabled = time_disabled; // 恢复时间控制禁用状态
     g_prog_status[tl_thread_idx].runtime_status.is_manual_offline = manual_offline; // 恢复"用户已断开"状态
+    g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_pending = manual_auth_pending; // 恢复"手动认证请求未消费"
+    g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force = manual_auth_force; // 恢复"跳过网络等待"
 }
 
 void reset()

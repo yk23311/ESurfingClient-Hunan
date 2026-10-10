@@ -29,6 +29,37 @@ static bool request_restart_auth()
 }
 
 /**
+ * @brief 请求强制发起一次认证 (当前还没有会话时用)
+ *
+ * 与 request_restart_auth() 的区别: 那个置 is_need_reauth 让**已经存在的**
+ * 认证线程重登; 这个要在"认证线程压根没被创建"的情况下把流程重新启动。
+ * 所以两个标志一起置:
+ *   · is_manual_auth_force   → wait_need_auth() 跳过网络等待
+ *   · is_manual_auth_pending → 线程守护据此重新走一遍认证流程
+ *
+ * 顺序要紧: 先 force 后 pending, 让消费方看到 pending 时 force 已经可见。
+ *
+ * @return 是否成功
+ */
+static bool request_force_auth()
+{
+    if (s_local_state)
+    {
+        if (g_prog_status == NULL || g_prog_cnt <= 0) return false;
+
+        g_prog_status[0].runtime_status.is_manual_auth_force = true;
+        g_prog_status[0].runtime_status.is_manual_auth_pending = true;
+
+        /* 认证线程若已存在 (但还没进认证流程), 让它立刻退出循环,
+           由线程守护带着上面两个标志重新拉起 */
+        g_prog_status[0].runtime_status.is_need_reauth = true;
+        return true;
+    }
+
+    return control_force_auth();
+}
+
+/**
  * @brief 请求重新加载配置并重新认证
  * @return 是否成功
  */
@@ -208,19 +239,33 @@ bool handle_api_post(struct mg_connection* c, struct mg_http_message* hm)
                 LOG_WARN("收到 Web 重新认证请求, 但认证进程不可达");
                 mg_http_reply(c, 503, "", "");
             }
-            else if (is_authed == false)
+            else if (is_authed)
             {
-                LOG_WARN("收到 Web 重新认证请求, 但没有线程在认证, 拒绝操作");
-                mg_http_reply(c, 403, "", "");
+                /* 已经有会话: 走原来的路子, 让认证线程登出后重新认证 */
+                if (request_restart_auth() == false)
+                {
+                    LOG_WARN("收到 Web 重新认证请求, 但下发到认证进程失败");
+                    mg_http_reply(c, 503, "", "");
+                }
+                else
+                {
+                    LOG_INFO("收到 Web 重新认证请求, 认证线程将重新进行认证");
+                    mg_http_reply(c, 204, "", "");
+                }
             }
-            else if (request_restart_auth() == false)
+            else if (request_force_auth() == false)
             {
-                LOG_WARN("收到 Web 重新认证请求, 但下发到认证进程失败");
+                LOG_WARN("收到 Web 重新认证请求, 但无法发起认证");
                 mg_http_reply(c, 503, "", "");
             }
             else
             {
-                LOG_INFO("收到 Web 重新认证请求, 认证线程将重新进行认证");
+                /**
+                 * 还没有会话 —— 这正是"网络通、但本程序没登录"的那种状态:
+                 * 主循环判定为已在线, 从不创建认证线程, 于是按钮点了也白点。
+                 * 置上强制认证请求, 让线程守护重新走一遍认证流程。
+                 */
+                LOG_INFO("收到 Web 重新认证请求, 当前没有会话, 将强制发起一次认证");
                 mg_http_reply(c, 204, "", "");
             }
         }

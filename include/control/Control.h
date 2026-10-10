@@ -75,6 +75,16 @@ bool control_disconnect(void);
 bool control_connect(void);
 
 /**
+ * @brief 请求认证进程强制发起一次认证 (不管网络探测怎么说)
+ *
+ * 与 control_restart_auth() 的区别: 那个要求**已经有会话**, 语义是"重登";
+ * 这个用于"网络通、但本程序还没有会话"的状态 —— 那时网络探测判定为已在线,
+ * 主循环从不创建认证线程, 普通重认证请求会因为"没有线程在认证"而失败。
+ * @return 是否下发成功
+ */
+bool control_force_auth(void);
+
+/**
  * @brief 请求认证进程优雅退出 (监管者停止子进程时用)
  *
  * 为什么需要它: Windows 上没有 SIGTERM, 监管者原本靠 GenerateConsoleCtrlEvent

@@ -154,6 +154,30 @@ typedef struct
      *   · 线程不再被重启, 因此断开期间**没有任何网络流量**
      */
     bool is_manual_offline;
+
+    /**
+     * 用户点了「重新认证」, 而当时**还没有会话** —— 请求挂在这里等主循环处理。
+     *
+     * 为什么需要它: 主循环只在探测到 302 (STATUS_NEED_AUTH) 时才创建认证线程。
+     * 接入设备在我们**已经在线**时不会注入 302, 于是程序一直判定 OK、从不认证;
+     * 而「重新认证」按钮又因为"没有线程在认证"被拒 (403)。用户如果处在
+     * "网络通、但本程序没有会话"的状态, 就没有任何办法把会话建起来。
+     *
+     * 为什么是**两个**标志, 而不是一个:
+     *   · is_manual_auth_force 给 wait_need_auth() 看, 让它跳过网络等待;
+     *   · is_manual_auth_pending 给主循环 / 线程守护看, 保证线程被真正拉起来。
+     * 只用一个不行 —— 认证线程退出时 clean() 会 memset 整个 runtime_status,
+     * 标志会在"线程已退出、新线程还没建"的空档里被抹掉, 于是这次请求白点。
+     * 这里用与 is_manual_offline 相同的模式: 标志活过 clean(), 由消费方清掉。
+     *
+     * 调用顺序 (并发约定): 先置 is_manual_auth_force, **再置** is_manual_auth_pending。
+     * 两个都是 bool 写, 顺序保证消费方看到 pending 时 force 一定已经可见。
+     * 反过来写会出现"线程被拉起来、却看不到 force、于是又去等 302"的窗口。
+     */
+    bool is_manual_auth_force;
+
+    /** 请求是否还没被消费掉 (见 is_manual_auth_force 的说明) */
+    bool is_manual_auth_pending;
 } runtime_status_t;
 
 typedef struct

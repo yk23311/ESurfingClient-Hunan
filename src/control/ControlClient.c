@@ -146,6 +146,13 @@ bool control_connect(void)
     return ctl_reply_ok(reply);
 }
 
+bool control_force_auth(void)
+{
+    char reply[CONTROL_MSG_MAX];
+    if (ctl_client_request("force_auth", reply, sizeof(reply)) == false) return false;
+    return ctl_reply_ok(reply);
+}
+
 bool control_request_shutdown(void)
 {
     char reply[CONTROL_MSG_MAX];

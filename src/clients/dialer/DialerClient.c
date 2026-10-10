@@ -174,7 +174,40 @@ int dialer_app(void* arg)
         g_prog_status[tl_thread_idx].login_cfg.idx);
 
     refresh_states(); // 刷新数据 (algo_id, host_name, client_id, mac_addr)
-    if (get_last_location() == false) g_prog_status[tl_thread_idx].runtime_status.is_running = false;  // 获取 last_location, 用于获取认证配置
+
+    /**
+     * 清掉"上一轮会话要求重来"的标志。
+     *
+     * 这个标志在线程守护那一路是**用来打断旧线程**的: 用户点「重新认证」/ 配置变更
+     * 时置上它, 让旧线程退出循环。但线程守护随后会带着同一个标志创建**新**线程 ——
+     * 而 sleep_ms(ms, true) 每 100 毫秒检查一次 is_need_reauth, 看到它就直接返回。
+     * 结果是新线程里所有可中断的睡眠全部变成空转: get_last_location() 会以每秒几十次
+     * 的频率狂刷 generate_204, 认证流程永远排不上 (实测踩到过, 日志里一秒能刷几百行)。
+     *
+     * 新线程的语义是"从头开始", 这个标志到它启动时就该失效 —— 真正的重来由
+     * is_running / is_need_reauth 驱动**旧**线程退出、守护重新拉起新线程来完成。
+     */
+    g_prog_status[tl_thread_idx].runtime_status.is_need_reauth = false;
+
+    /**
+     * 取"接入设备注入的门户地址"。它内部会一直等到探测到 302 (STATUS_NEED_AUTH)
+     * 为止 —— 已在线时等不到, 于是**一直等下去**, 这正是常规路径该有的行为:
+     * 没被劫持就说明不需要认证。
+     *
+     * 但手动强制认证的语义恰恰相反: 用户说了"不管有没有 302 都试一次"。这时必须
+     * 跳过这个会无限等待的调用, 否则按钮点了等于没点 (实测: 线程建起来了, 却永远
+     * 卡在这里刷"已连接至互联网")。
+     * 跳过是安全的 —— 它产出的 last_location 只有广东分支在用, 湖南的端点固定、
+     * 门户走 discover_hunan() 的"配置回退"那一支。
+     */
+    if (g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force == false)
+    {
+        if (get_last_location() == false) g_prog_status[tl_thread_idx].runtime_status.is_running = false; // 获取 last_location, 用于获取认证配置
+    }
+    else
+    {
+        LOG_INFO("强制认证: 跳过等待门户注入 (接入设备不会在已在线时下发 302)");
+    }
 
     /**
      * 运行循环
