@@ -1,5 +1,5 @@
 /**
- * 湖南离线自检 —— 用 C:\temp\zx\extracted 里的官方抓包做逐字节验收。
+ * 湖南离线自检 —— 用官方抓包 (32 份) 做逐字节验收。
  *
  * 两项独立检查, 每个样本都跑:
  *   A. 密码层: hex → 解密 → 回加密, 必须与原始 hex 逐字节相同。
@@ -349,7 +349,12 @@ static int check_portal_parse()
 
 int main(int argc, char** argv)
 {
-    const char* dir = (argc > 1) ? argv[1] : "C:\\temp\\zx\\extracted";
+    /*
+     * 样本默认取仓库内归档的那 32 份官方抓包, 相对**当前目录**解析 ——
+     * 原来写死的是 C:\temp\zx\extracted, 那个临时目录已经不存在了。
+     * 用 scripts\run-selftest.bat 跑最省事 (它会 cd 到仓库根再调用)。
+     */
+    const char* dir = (argc > 1) ? argv[1] : "re-artifacts/extracted";
     const char* algo = "FAB1DCDE-2D24-41CD-8510-2416DC7854CF";
 
     printf("湖南离线自检 (不联网)\n");
