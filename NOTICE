@@ -1,0 +1,65 @@
+ESurfingClient-CVersion — Hunan adaptation
+==========================================
+
+This project is a modified version of:
+
+    ESurfingClient-CVersion
+    https://github.com/BadGhost520/ESurfingClient-CVersion
+    Copyright BadGhost520 and contributors
+    Licensed under the Apache License, Version 2.0
+
+The fork was extracted from that project's `esurfingclient/app/` subtree. 121 of
+the 129 files in that subtree are byte-identical to upstream and served as the
+baseline (local commit `00f1b5b`). The LuCI plugin, OpenWrt packaging, `docs/`,
+CI workflows and the upstream README were **not** carried over.
+
+
+What was modified (Apache License 2.0, section 4(b))
+----------------------------------------------------
+
+Added — Hunan province protocol support:
+    `src/hunan/`            HunanXml / HunanSelfTest / HunanLiveTest
+    `src/cipher/algo/hunan/` double-layer AES-CBC + Hunan key tables
+    `include/hunan/`
+
+Added — `src/utils/UrlParse.c`, `include/utils/UrlParse.h`
+    Pure functions to split a URL's host/port and read a query parameter.
+
+Added — portal address discovery (`src/clients/net/CheckNetwork.c`)
+    When unauthenticated, the access device (BAS) hijacks plain HTTP and answers
+    with a 302 whose `Location` contains the portal URL. The program snapshots it,
+    so the portal address does not have to be configured — the configuration value
+    is only a fallback.
+
+Added — Web UI rewritten in WinUI / Fluent style, zero external assets:
+    `portal/index.html`, `portal/assets/css/app.css`, `portal/assets/js/app.js`
+    The original files are kept alongside as `*.upstream.*`.
+
+Added — `scripts/` — CMake + Ninja build, client restart, offline self-test.
+
+Replaced — the bundled mongoose HTTP server with a self-written minimal one:
+    `third_party/minihttp/` (~500 lines, same 18 entry points as mongoose).
+    mongoose is GPL-2.0-only-or-commercial; it was removed entirely, which drops
+    the GPL obligation from the shipped binary.
+
+Modified — configuration handling. The program now starts its web UI on first run
+    and lets the user fill in account and province there, instead of requiring a
+    hand-edited JSON file before it will do anything.
+
+The per-file history of all of the above is in this repository's git log.
+
+
+Third-party components bundled in this repository
+-------------------------------------------------
+
+    third_party/7z        LZMA SDK by Igor Pavlov        Public domain
+    third_party/cJSON     cJSON by Dave Gamble et al.    MIT
+    third_party/minihttp  written for this fork          Apache-2.0 (as this project)
+
+
+Not included
+------------
+
+The author's packet captures of the official closed-source client, and the
+scripts used to analyse them, are **not** part of this repository. They are
+reverse-engineering evidence, not third-party source code.
