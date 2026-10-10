@@ -261,6 +261,11 @@ WaitResult wait_need_auth()
          * g_prog_status[-1] 是越界读, 读到的是堆上的垃圾 (实测 init 读成 224)。
          * 同一个函数里的时间窗口判断就是这么写的, 这里跟它保持一致。
          *
+         * **只判断, 不清标志**: 这个标志还要交给认证线程用 —— 它靠它决定跳过
+         * get_last_location() (那个调用要等到 302 才返回, 已在线时等不到)。
+         * 曾经在这里就清掉, 结果标志传到线程时已经没了, 线程照样去等 302,
+         * 表现就是"线程建起来了、却什么都不做"。消费点在 dialer_app()。
+         *
          * is_initialized 为假 = 还没进过认证流程, 才是"没有会话"的那种情况;
          * 已经有会话时不必打断, 认证流程自己会处理重认证。
          */
@@ -268,10 +273,6 @@ WaitResult wait_need_auth()
             && g_prog_status[0].runtime_status.is_initialized == false)
         {
             LOG_INFO("收到手动认证请求: 跳过网络等待, 直接发起认证");
-
-            /* 用掉就清: 线程守护那一路本来就有 5 秒节流, 这里再给一个兜底,
-               免得"强制标志还在、认证却没起来"时变成每秒一次的忙循环 */
-            g_prog_status[0].runtime_status.is_manual_auth_force = false;
             return WAIT_READY;
         }
 

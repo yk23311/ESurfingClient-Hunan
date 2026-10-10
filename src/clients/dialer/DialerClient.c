@@ -65,6 +65,54 @@ static RunStatus run()
         return RUN_SUCCESS;
     }
 
+    /**
+     * 用户点了「重新认证」而当时还没有会话: 直接发起一次认证, 不看网络探测结果。
+     *
+     * 为什么必须排在这个 switch 之前: 已在线时 check_network_status() 返回
+     * STATUS_OK, 那个分支只会打"已连接至互联网"然后 sleep —— 认证根本不会被调用。
+     * 这正是"网络通、但本程序没有会话, 点了按钮没反应"的根因。
+     *
+     * 标志在这里才消费(而不是 dialer_app 启动时): 它必须活到**这一行**,
+     * 否则 run() 读到的是 0, 又会掉进 STATUS_OK。实测踩过两次 ——
+     * 第一次在主线程 wait_need_auth() 里清掉, 第二次在 dialer_app 里清掉,
+     * 两次都是"标志提前消失、认证没发起"。消费点必须和使用点重合。
+     */
+    if (g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force)
+    {
+        g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force = false;
+        g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_pending = false;
+
+        retry_timeout = 1;
+        retry_auth = 1;
+
+        LOG_INFO("强制认证: 跳过网络探测, 直接发起一次认证");
+
+        if (auth() != AUTH_SUCCESS)
+        {
+            /* 认证失败不该打死这一轮: 要重试而不是退出线程。
+               (之前这里直接 return RUN_SUCCESS, 等于一次失败就永远不再试。) */
+            if (g_prog_status[tl_thread_idx].runtime_status.is_running == false)
+            {
+                return RUN_FAILED;
+            }
+            if (retry_auth > 5)
+            {
+                LOG_FATAL("强制认证失败 %" PRIu8 " 次, 停止重试 (账号密码或门户地址可能有误)", retry_auth - 1);
+                return RUN_FAILED;
+            }
+            retry_auth_time = 60000 * table[retry_auth - 1];
+            LOG_ERROR("强制认证失败, 重试: 第 %" PRIu8 " 次, 最多 5 次, 下一次重试时间: %" PRIu64 " 毫秒后",
+                      retry_auth, retry_auth_time);
+            retry_auth++;
+            sleep_ms(retry_auth_time, true);
+
+            /* 重试也要继续走强制路径: 否则下一次进 run() 又会掉进 STATUS_OK */
+            g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force = true;
+            return RUN_SUCCESS;
+        }
+        return RUN_SUCCESS;
+    }
+
     switch (check_network_status(true)) // 检测网络状态
     {
     case STATUS_OK: // 正常联网
@@ -190,23 +238,39 @@ int dialer_app(void* arg)
     g_prog_status[tl_thread_idx].runtime_status.is_need_reauth = false;
 
     /**
-     * 取"接入设备注入的门户地址"。它内部会一直等到探测到 302 (STATUS_NEED_AUTH)
-     * 为止 —— 已在线时等不到, 于是**一直等下去**, 这正是常规路径该有的行为:
-     * 没被劫持就说明不需要认证。
+     * **只看, 不清** —— 真正的消费点在 run() 里 (见那里的注释)。
      *
-     * 但手动强制认证的语义恰恰相反: 用户说了"不管有没有 302 都试一次"。这时必须
-     * 跳过这个会无限等待的调用, 否则按钮点了等于没点 (实测: 线程建起来了, 却永远
-     * 卡在这里刷"已连接至互联网")。
-     * 跳过是安全的 —— 它产出的 last_location 只有广东分支在用, 湖南的端点固定、
-     * 门户走 discover_hunan() 的"配置回退"那一支。
+     * 这里一旦清掉, run() 就看不到它, 于是又会掉进"已连接至互联网"分支、
+     * 认证根本不会发起。这个坑我踩了两次, 记在这里免得第三次:
+     * 标志的**消费点必须和使用点重合**。
      */
-    if (g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force == false)
+    const bool force_auth = g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force;
+
+    if (force_auth)
     {
-        if (get_last_location() == false) g_prog_status[tl_thread_idx].runtime_status.is_running = false; // 获取 last_location, 用于获取认证配置
+        /**
+         * 广东分支**做不到**强制认证, 明确拒绝而不是假装成功。
+         *
+         * discover_guangdong() 的端点与身份**全部**来自 last_location 里的门户页
+         * (campus.js 注释块、wlanacip 查询串)。跳过 get_last_location() 就没有
+         * last_location, 那一步必然失败 —— 与其打一条看不懂的"准备认证参数失败",
+         * 不如直说。
+         */
+        if (g_prog_status[tl_thread_idx].login_cfg.province != PROVINCE_HUNAN)
+        {
+            LOG_ERROR("强制认证仅支持湖南: 广东的端点与身份必须从门户页(302 注入的地址)发现, "
+                      "没有 302 就无法认证");
+            g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_force = false;
+            g_prog_status[tl_thread_idx].runtime_status.is_manual_auth_pending = false;
+            g_prog_status[tl_thread_idx].runtime_status.is_running = false;
+            return 0;
+        }
+
+        LOG_INFO("强制认证: 跳过等待门户注入 (接入设备不会在已在线时下发 302), 门户改用配置里的回退值");
     }
     else
     {
-        LOG_INFO("强制认证: 跳过等待门户注入 (接入设备不会在已在线时下发 302)");
+        if (get_last_location() == false) g_prog_status[tl_thread_idx].runtime_status.is_running = false; // 获取 last_location, 用于获取认证配置
     }
 
     /**
